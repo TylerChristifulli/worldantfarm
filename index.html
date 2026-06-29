@@ -123,12 +123,18 @@ const stageEl = document.getElementById('stage');
 let W=0,H=0,DPR=Math.min(2,window.devicePixelRatio||1);
 const tunnel = document.createElement('canvas'); const tctx = tunnel.getContext('2d');
 const sand = document.createElement('canvas'); const sctx = sand.getContext('2d');
-const tmini = document.createElement('canvas'); tmini.width=256; tmini.height=144;  // downscaled tunnel snapshot for sharing
+const tmini = document.createElement('canvas');  // aspect-correct, higher-res tunnel snapshot for sharing
 // share the dug tunnel network so it persists across refreshes and looks the same for everyone
-function exportTunnel(){ try{ const m=tmini.getContext('2d'); m.clearRect(0,0,256,144);
-  m.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,256,144); return tmini.toDataURL('image/webp',0.5); }catch(e){ return null; } }
+function exportTunnel(){ try{
+    const MAXD=900, sc=Math.min(1, MAXD/Math.max(W,H));
+    const tw=Math.max(2,Math.round(W*sc)), th=Math.max(2,Math.round(H*sc));
+    if(tmini.width!==tw) tmini.width=tw; if(tmini.height!==th) tmini.height=th;
+    const m=tmini.getContext('2d'); m.clearRect(0,0,tw,th);
+    m.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,tw,th);
+    return tmini.toDataURL('image/webp',0.72);
+  }catch(e){ return null; } }
 function importTunnel(url){ if(!url) return; const img=new Image();
-  img.onload=()=>{ if(!W||!H) return; tctx.clearRect(0,0,W,H); tctx.drawImage(img,0,0,img.width,img.height,0,0,W,H); }; img.src=url; }
+  img.onload=()=>{ if(!W||!H) return; tctx.clearRect(0,0,W,H); tctx.imageSmoothingQuality='high'; tctx.drawImage(img,0,0,img.width,img.height,0,0,W,H); }; img.src=url; }
 function resize(){
   W=stageEl.clientWidth; H=stageEl.clientHeight;
   cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
@@ -728,10 +734,11 @@ const COLONY_ID="main", LEASE_ID="broadcaster";
 const SUPA_H={apikey:SUPA_KEY, Authorization:"Bearer "+SUPA_KEY, "Content-Type":"application/json"};
 const CLIENT_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
 const BROADCAST_MS=1200, POLL_MS=1200, LEASE_TTL=6000, LEASE_EVERY=2500;
-let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0;
+let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0, lastTun=0;
 let interpA=null, interpB=null, interpStart=0;
 
-function snapshot(){ return {v:3, lastSimDay:simDay, _id, born, died, dug, usedNames:[...usedNames], ants, food, tunImg:exportTunnel()}; }
+// cw/ch = broadcaster's canvas size, so viewers can map ants/food into their own window (keeps ants on their tunnels)
+function snapshot(includeTun){ const s={v:3, lastSimDay:simDay, cw:W, ch:H, _id, born, died, dug, usedNames:[...usedNames], ants, food}; if(includeTun) s.tunImg=exportTunnel(); return s; }
 function ensureH(a){ if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10}; }
 function setStatus(){
   const el=document.getElementById('cloudLine'); const b=document.getElementById('livebadge');
@@ -743,9 +750,10 @@ function setStatus(){
 function applyState(d, shiftAges){
   if(!d||!Array.isArray(d.ants)||!d.ants.length) return false;
   const now=realNow(); const delta = shiftAges ? (now-(typeof d.lastSimDay==='number'?d.lastSimDay:now)) : 0;
-  ants=d.ants; food=Array.isArray(d.food)?d.food:[]; born=d.born||0; died=d.died||0; dug=d.dug||0;
+  const sx=W/(d.cw||W), sy=H/(d.ch||H);   // map saved coords into this window
+  ants=d.ants; food=Array.isArray(d.food)?d.food.map(f=>({x:f.x*sx,y:f.y*sy,r:f.r})):[]; born=d.born||0; died=d.died||0; dug=d.dug||0;
   usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); simDay=now;
-  for(const a of ants){ a.born=(a.born||0)+delta; a.x=clamp(a.x,W*0.04,W*0.96); a.y=clamp(a.y,SKY()+22,H-22); ensureH(a); }
+  for(const a of ants){ a.born=(a.born||0)+delta; a.x=clamp(a.x*sx,W*0.04,W*0.96); a.y=clamp(a.y*sy,SKY()+22,H-22); ensureH(a); }
   importTunnel(d.tunImg);   // restore the shared tunnel network so it doesn't start over
   nursery={x:W*0.5,y:H*0.62}; return true;
 }
@@ -776,10 +784,13 @@ async function pollState(){
   if(d && Array.isArray(d.ants)){
     born=d.born||0; died=d.died||0; dug=d.dug||0;
     importTunnel(d.tunImg);   // viewers render the same shared tunnel network
+    const sx=W/(d.cw||W), sy=H/(d.ch||H);   // map broadcaster coords into this window so ants sit on their tunnels
+    for(const a of d.ants){ a.x*=sx; a.y*=sy; ensureH(a); }
+    food=Array.isArray(d.food)?d.food.map(f=>({x:f.x*sx,y:f.y*sy,r:f.r})):[];
     interpA = interpB || {map:posMap(d.ants)};
     interpB = {map:posMap(d.ants)};
     interpStart=performance.now();
-    ants=d.ants; food=Array.isArray(d.food)?d.food:[]; for(const a of ants) ensureH(a);
+    ants=d.ants;
     nursery={x:W*0.5,y:H*0.62};
   }
 }
@@ -801,7 +812,7 @@ resize();   // size canvas + build sand now that all helpers exist
 })();
 window.addEventListener('beforeunload', ()=>{ if(role==="broadcaster"){ try{ fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",keepalive:true,
   headers:{...SUPA_H,Prefer:"resolution=merge-duplicates,return=minimal"},
-  body:JSON.stringify([{id:COLONY_ID,data:snapshot(),updated_at:new Date().toISOString()}])}); }catch(e){} } });
+  body:JSON.stringify([{id:COLONY_ID,data:snapshot(true),updated_at:new Date().toISOString()}])}); }catch(e){} } });
 
 let last=performance.now();
 function loop(now){
@@ -810,7 +821,9 @@ function loop(now){
     simDay=realNow();                    // wall clock for HUD / day-night / season / weather
     moveDt=dtReal;                       // movement & digging run in real time
     step(dtReal*1000/DAY_MS);            // biology stays on the true 24-hour-per-day scale
-    if(now-lastBroadcast>BROADCAST_MS){ lastBroadcast=now; writeRow(COLONY_ID, snapshot()); }
+    if(now-lastBroadcast>BROADCAST_MS){ lastBroadcast=now;
+      const tun=(now-lastTun>5000); if(tun)lastTun=now;     // positions stream often; tunnel image ~every 5s
+      writeRow(COLONY_ID, snapshot(tun)); }
   } else {
     simDay=realNow();
     if(now-lastPoll>POLL_MS){ lastPoll=now; pollState(); }
