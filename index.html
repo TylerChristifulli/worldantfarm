@@ -195,6 +195,7 @@ function realNow(){
 const DAY_MS=24*60*60*1000;   // real time = sim time: one simulated day takes a full 24 hours
 let nursery={x:0,y:0};
 let selId=null;
+let dug=0;            // total excavated dirt → drives the surface mound
 const MAXPOP=58;
 
 function seasonOf(d){ const x=((d%365)+365)%365;
@@ -436,10 +437,8 @@ function step(dt){
 
     // ---- thought ----
     a.thTimer-=dt; if(a.thTimer<=0){ a.thought=chooseThought(a,winter); a.thTimer=rnd(2.5,5); }
-
-    // carve tunnel
-    carve(a.x,a.y, st==='adult'?7:4);
   }
+  dug += adults.length * moveDt * 0.15;   // real-time digging — excavated dirt builds the surface mound
 }
 
 function chooseThought(a,winter){
@@ -496,16 +495,39 @@ function kill(a,why){
   log("🪦 <b>"+a.name+" "+a.surname+"</b> "+why+" at "+Math.floor(ageDays(a))+" days.");
 }
 
-/* ---------- tunnels ---------- */
-function carve(x,y,r){
+/* ---------- tunnels: narrow channels, granular collapse, surface spoil mound ---------- */
+function carve(x,y,r){            // a hole can only be so wide before the sand caves in
   tctx.globalCompositeOperation='source-over';
-  const g=tctx.createRadialGradient(x,y,0,x,y,r*2);
-  g.addColorStop(0,'rgba(60,44,26,0.40)'); g.addColorStop(1,'rgba(60,44,26,0)');
-  tctx.fillStyle=g; tctx.beginPath(); tctx.arc(x,y,r*2,0,7); tctx.fill();
+  const rad=r*1.5;
+  const g=tctx.createRadialGradient(x,y,0,x,y,rad);
+  g.addColorStop(0,'rgba(50,35,17,0.5)'); g.addColorStop(0.6,'rgba(50,35,17,0.25)'); g.addColorStop(1,'rgba(50,35,17,0)');
+  tctx.fillStyle=g; tctx.beginPath(); tctx.arc(x,y,rad,0,7); tctx.fill();
+}
+function healTunnels(){           // unused voids are prone to gravity — sand slowly trickles back in
+  tctx.globalCompositeOperation='destination-out';
+  tctx.fillStyle='rgba(0,0,0,0.0011)';
+  tctx.fillRect(0,0,W,H);
+  tctx.globalCompositeOperation='source-over';
+}
+function drawMound(){             // the dirt they remove has to go somewhere → it piles up top
+  const mH=Math.min(SKY()*0.9, Math.sqrt(Math.max(0,dug))*0.8);
+  if(mH<2) return;
+  const cx=W*0.5, baseY=SKY()+1.5, mW=Math.max(46, mH*3.0);
+  const g=ctx.createLinearGradient(0,baseY-mH,0,baseY);
+  g.addColorStop(0,'#ecd0a6'); g.addColorStop(1,'#bd9a5e');
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.moveTo(cx-mW,baseY); ctx.quadraticCurveTo(cx, baseY-mH*2.0, cx+mW, baseY); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(90,64,32,0.12)';   // soft shading on one flank
+  ctx.beginPath(); ctx.moveTo(cx,baseY-mH); ctx.quadraticCurveTo(cx+mW*0.6, baseY-mH*0.7, cx+mW, baseY); ctx.lineTo(cx,baseY); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='rgba(38,26,12,0.75)';   // entrance crater at the summit
+  ctx.beginPath(); ctx.ellipse(cx, baseY-mH*0.72, Math.min(7,mW*0.10), Math.min(4,mH*0.22),0,0,7); ctx.fill();
 }
 
 /* ---------- drawing ---------- */
 function draw(){
+  // ants carve as they move through the dirt; unused voids slowly collapse
+  healTunnels();
+  for(const a of ants){ const s=stage(a); if(s!=='egg' && a.y>SKY()+4) carve(a.x,a.y, s==='adult'?3.5:2); }
   // sandy earth (pre-rendered) + dug tunnels
   ctx.drawImage(sand,0,0,sand.width,sand.height,0,0,W,H);
   ctx.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,W,H);
@@ -513,6 +535,7 @@ function draw(){
   ctx.strokeStyle='#9c7a44'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,SKY()); ctx.lineTo(W,SKY()); ctx.stroke();
   ctx.fillStyle='#3f6b3a';
   for(let x=0;x<W;x+=11){ const h=6+((x*7)%9); ctx.beginPath(); ctx.moveTo(x,SKY()); ctx.lineTo(x+3,SKY()-h); ctx.lineTo(x+6,SKY()); ctx.fill(); }
+  drawMound();   // spoil pile from everything they've excavated
   // nursery chamber
   ctx.fillStyle='rgba(231,181,60,0.07)'; ctx.strokeStyle='rgba(231,181,60,0.35)';
   ctx.beginPath(); ctx.ellipse(nursery.x,nursery.y,58,40,0,0,7); ctx.fill(); ctx.stroke();
@@ -689,7 +712,7 @@ const BROADCAST_MS=1200, POLL_MS=1200, LEASE_TTL=6000, LEASE_EVERY=2500;
 let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0;
 let interpA=null, interpB=null, interpStart=0;
 
-function snapshot(){ return {v:2, lastSimDay:simDay, _id, born, died, usedNames:[...usedNames], ants, food}; }
+function snapshot(){ return {v:2, lastSimDay:simDay, _id, born, died, dug, usedNames:[...usedNames], ants, food}; }
 function ensureH(a){ if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10}; }
 function setStatus(){
   const el=document.getElementById('cloudLine'); const b=document.getElementById('livebadge');
@@ -701,12 +724,12 @@ function setStatus(){
 function applyState(d, shiftAges){
   if(!d||!Array.isArray(d.ants)) return false;
   const now=realNow(); const delta = shiftAges ? (now-(typeof d.lastSimDay==='number'?d.lastSimDay:now)) : 0;
-  ants=d.ants; food=Array.isArray(d.food)?d.food:[]; born=d.born||0; died=d.died||0;
+  ants=d.ants; food=Array.isArray(d.food)?d.food:[]; born=d.born||0; died=d.died||0; dug=d.dug||0;
   usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); simDay=now;
   for(const a of ants){ a.born=(a.born||0)+delta; a.x=clamp(a.x,W*0.04,W*0.96); a.y=clamp(a.y,SKY()+22,H-22); ensureH(a); }
   nursery={x:W*0.5,y:H*0.62}; return true;
 }
-function freshColony(){ ants=[]; food=[]; born=0; died=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null; simDay=realNow(); seed(); }
+function freshColony(){ ants=[]; food=[]; born=0; died=0; dug=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null; simDay=realNow(); seed(); }
 async function readRow(id){ try{ const r=await fetch(SUPA_URL+"/rest/v1/colony_saves?id=eq."+id+"&select=data",{headers:SUPA_H});
   if(!r.ok) return null; const rows=await r.json(); return rows&&rows[0]?rows[0].data:null; }catch(e){ return null; } }
 async function writeRow(id,data){ try{ const r=await fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",
