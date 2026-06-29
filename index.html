@@ -60,7 +60,18 @@
   #log div b{color:var(--ink)}
   .hint{font-size:11px;color:var(--muted);text-align:center;margin-top:4px}
   .empty{font-size:12px;color:var(--muted);text-align:center;padding:14px 4px;line-height:1.5}
-  @media(max-width:820px){#app{grid-template-columns:1fr}aside{display:none}}
+  @media(max-width:820px){
+    html,body{height:auto;overflow:auto;-webkit-text-size-adjust:100%}
+    #app{grid-template-columns:1fr;grid-template-rows:auto 58vh auto;height:auto;min-height:100vh}
+    header{flex-wrap:wrap;gap:7px 12px;padding:8px 10px}
+    header h1{font-size:14px}
+    header h1 small{display:none}
+    .clock{font-size:12px}
+    .yearbar{order:6;flex-basis:100%;min-width:0}
+    #stage{touch-action:manipulation}
+    aside{border-left:none;border-top:1px solid var(--line);overflow-y:visible}
+    #log{max-height:150px}
+  }
 </style>
 </head>
 <body>
@@ -112,6 +123,12 @@ const stageEl = document.getElementById('stage');
 let W=0,H=0,DPR=Math.min(2,window.devicePixelRatio||1);
 const tunnel = document.createElement('canvas'); const tctx = tunnel.getContext('2d');
 const sand = document.createElement('canvas'); const sctx = sand.getContext('2d');
+const tmini = document.createElement('canvas'); tmini.width=256; tmini.height=144;  // downscaled tunnel snapshot for sharing
+// share the dug tunnel network so it persists across refreshes and looks the same for everyone
+function exportTunnel(){ try{ const m=tmini.getContext('2d'); m.clearRect(0,0,256,144);
+  m.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,256,144); return tmini.toDataURL('image/webp',0.5); }catch(e){ return null; } }
+function importTunnel(url){ if(!url) return; const img=new Image();
+  img.onload=()=>{ if(!W||!H) return; tctx.clearRect(0,0,W,H); tctx.drawImage(img,0,0,img.width,img.height,0,0,W,H); }; img.src=url; }
 function resize(){
   W=stageEl.clientWidth; H=stageEl.clientHeight;
   cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
@@ -525,9 +542,11 @@ function drawMound(){             // the dirt they remove has to go somewhere �
 
 /* ---------- drawing ---------- */
 function draw(){
-  // ants carve as they move through the dirt; unused voids slowly collapse
-  healTunnels();
-  for(const a of ants){ const s=stage(a); if(s!=='egg' && a.y>SKY()+4) carve(a.x,a.y, s==='adult'?3.5:2); }
+  // only the live broadcaster digs/collapses; the resulting network is shared to all viewers
+  if(role==='broadcaster'){
+    healTunnels();
+    for(const a of ants){ const s=stage(a); if(s!=='egg' && a.y>SKY()+4) carve(a.x,a.y, s==='adult'?3.5:2); }
+  }
   // sandy earth (pre-rendered) + dug tunnels
   ctx.drawImage(sand,0,0,sand.width,sand.height,0,0,W,H);
   ctx.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,W,H);
@@ -712,7 +731,7 @@ const BROADCAST_MS=1200, POLL_MS=1200, LEASE_TTL=6000, LEASE_EVERY=2500;
 let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0;
 let interpA=null, interpB=null, interpStart=0;
 
-function snapshot(){ return {v:2, lastSimDay:simDay, _id, born, died, dug, usedNames:[...usedNames], ants, food}; }
+function snapshot(){ return {v:3, lastSimDay:simDay, _id, born, died, dug, usedNames:[...usedNames], ants, food, tunImg:exportTunnel()}; }
 function ensureH(a){ if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10}; }
 function setStatus(){
   const el=document.getElementById('cloudLine'); const b=document.getElementById('livebadge');
@@ -722,14 +741,15 @@ function setStatus(){
   if(b) b.textContent="🔴 LIVE";
 }
 function applyState(d, shiftAges){
-  if(!d||!Array.isArray(d.ants)) return false;
+  if(!d||!Array.isArray(d.ants)||!d.ants.length) return false;
   const now=realNow(); const delta = shiftAges ? (now-(typeof d.lastSimDay==='number'?d.lastSimDay:now)) : 0;
   ants=d.ants; food=Array.isArray(d.food)?d.food:[]; born=d.born||0; died=d.died||0; dug=d.dug||0;
   usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); simDay=now;
   for(const a of ants){ a.born=(a.born||0)+delta; a.x=clamp(a.x,W*0.04,W*0.96); a.y=clamp(a.y,SKY()+22,H-22); ensureH(a); }
+  importTunnel(d.tunImg);   // restore the shared tunnel network so it doesn't start over
   nursery={x:W*0.5,y:H*0.62}; return true;
 }
-function freshColony(){ ants=[]; food=[]; born=0; died=0; dug=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null; simDay=realNow(); seed(); }
+function freshColony(){ ants=[]; food=[]; born=0; died=0; dug=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null; simDay=realNow(); if(tctx&&W)tctx.clearRect(0,0,W,H); seed(); }
 async function readRow(id){ try{ const r=await fetch(SUPA_URL+"/rest/v1/colony_saves?id=eq."+id+"&select=data",{headers:SUPA_H});
   if(!r.ok) return null; const rows=await r.json(); return rows&&rows[0]?rows[0].data:null; }catch(e){ return null; } }
 async function writeRow(id,data){ try{ const r=await fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",
@@ -744,7 +764,7 @@ async function tickLease(){
     if(await writeRow(LEASE_ID,{owner:CLIENT_ID, ts:now}) && role!=="broadcaster"){
       role="broadcaster";
       const d=await readRow(COLONY_ID);
-      if(d && Array.isArray(d.ants) && d.ants.length) applyState(d,true); else freshColony();
+      if(!applyState(d,true)) freshColony();
       log("📡 This tab is now running the live colony for everyone.");
     }
   } else if(role!=="viewer"){ role="viewer"; }
@@ -754,7 +774,8 @@ function posMap(list){ const m={}; for(const a of list) m[a.id]={x:a.x,y:a.y,dir
 async function pollState(){
   const d=await readRow(COLONY_ID);
   if(d && Array.isArray(d.ants)){
-    born=d.born||0; died=d.died||0;
+    born=d.born||0; died=d.died||0; dug=d.dug||0;
+    importTunnel(d.tunImg);   // viewers render the same shared tunnel network
     interpA = interpB || {map:posMap(d.ants)};
     interpB = {map:posMap(d.ants)};
     interpStart=performance.now();
@@ -774,8 +795,8 @@ resize();   // size canvas + build sand now that all helpers exist
 { const el=document.getElementById('cloudLine'); if(el) el.textContent="☁ connecting to live colony…"; }
 (async function boot(){
   const d=await readRow(COLONY_ID);
-  if(d && Array.isArray(d.ants) && d.ants.length) applyState(d,true);   // render immediately
-  await tickLease();                                                    // broadcaster if free, else viewer
+  if(d && Array.isArray(d.ants) && d.ants.length) applyState(d,true);   // render saved colony immediately
+  await tickLease();                      // broadcaster if free, else viewer
   requestAnimationFrame(loop);
 })();
 window.addEventListener('beforeunload', ()=>{ if(role==="broadcaster"){ try{ fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",keepalive:true,
@@ -786,7 +807,9 @@ let last=performance.now();
 function loop(now){
   let dtReal=(now-last)/1000; last=now; if(dtReal>0.1)dtReal=0.1;
   if(role==="broadcaster"){
-    moveDt=dtReal; const dtDays=dtReal*1000/DAY_MS*speed; simDay+=dtDays; step(dtDays);
+    simDay=realNow();                    // wall clock for HUD / day-night / season / weather
+    moveDt=dtReal;                       // movement & digging run in real time
+    step(dtReal*1000/DAY_MS);            // biology stays on the true 24-hour-per-day scale
     if(now-lastBroadcast>BROADCAST_MS){ lastBroadcast=now; writeRow(COLONY_ID, snapshot()); }
   } else {
     simDay=realNow();
