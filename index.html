@@ -42,6 +42,14 @@
   .horm .lab span:last-child{font-variant-numeric:tabular-nums;color:var(--muted)}
   .bar{height:7px;background:#000;border-radius:5px;overflow:hidden}
   .bar i{display:block;height:100%;width:0%;transition:width .4s}
+  .antrow{padding:5px 6px;border-bottom:1px solid #221d12;cursor:pointer;border-left:2px solid transparent}
+  .antrow:hover{background:#1c1810}
+  .antrow.sel{background:#241d10;border-left:2px solid var(--gold)}
+  .antrow .nm{display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;color:var(--muted)}
+  .antrow .nm b{color:var(--ink);font-weight:600}
+  .mini{display:flex;flex-direction:column;gap:1.5px}
+  .mb{height:3px;background:#000;border-radius:2px;overflow:hidden}
+  .mb i{display:block;height:100%}
   .who{font-size:15px;color:var(--ink);margin-bottom:2px}
   .who .sex{font-size:12px}
   .badge{display:inline-block;font-size:10px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--muted);margin-right:5px}
@@ -64,8 +72,7 @@
     <span class="season" id="wx" title="Live weather, New Richmond WI">⛅ —</span>
     <div class="yearbar"><i id="yearfill"></i></div>
     <div class="ctrls">
-      <button id="play" class="on">⏸ Pause</button>
-      <button id="reset" title="Start a brand-new colony">↺ Reset</button>
+      <span class="season" id="livebadge" title="One shared colony — everyone sees the same ants at the same time">🔴 LIVE</span>
     </div>
   </header>
 
@@ -356,20 +363,24 @@ function step(dt){
     const partner=a.partnerId?antById(a.partnerId):null;
     if(a.partnerId && !partner){ a.partnerId=null; a.H.cortisol=clamp(a.H.cortisol+35); a.H.oxytocin=clamp(a.H.oxytocin-30); log("<b>"+a.name+"</b> lost their partner. Grief floods the tunnels."); }
 
-    // --- choose goal ---
+    // --- choose goal --- (paired ants live their own lives; they only seek each other to mate)
+    const f = partner ? (a.sex==='F'?a:partner) : null;
+    const m = partner ? (a.sex==='M'?a:partner) : null;
+    const mateReady = partner && f && m && !f.pregnant && f.libidoCD<=0 && m.libidoCD<=0 &&
+                      f.H.libido>62 && m.H.libido>55 && f.hunger<58 && m.hunger<66 && adults.length<MAXPOP;
     let goal="wander";
     if(a.hunger>55) goal="food";
     else if(!a.partnerId && a.H.cortisol<80) goal="seekMate";
-    else if(partner) goal="bond";
+    else if(mateReady) goal="mate";
     if(a.pregnant && a.gest<=0) goal="nest";
 
-    // distance to partner
+    // distance to partner (used for bonding hormones)
     let nearPartner=0;
     if(partner){ const d=Math.hypot(partner.x-a.x,partner.y-a.y); nearPartner=d<55?1:0; }
 
     // ---- act on goal ----
     if(goal==="food"){
-      let best=null,bd=1e9; for(const f of food){const d=Math.hypot(f.x-a.x,f.y-a.y); if(d<bd){bd=d;best=f;}}
+      let best=null,bd=1e9; for(const f2 of food){const d=Math.hypot(f2.x-a.x,f2.y-a.y); if(d<bd){bd=d;best=f2;}}
       if(best){ a.tx=best.x; a.ty=best.y; if(bd<10){ eat(a,best); } }
       else { wander(a); }
       moveTo(a,dt,26);
@@ -378,12 +389,10 @@ function step(dt){
       for(const o of adults){ if(o!==a && o.sex!==a.sex && !o.partnerId && !related(a,o) && o.H.cortisol<85){
         const d=Math.hypot(o.x-a.x,o.y-a.y); if(d<bd){bd=d;best=o;} } }
       if(best){ a.tx=best.x; a.ty=best.y; moveTo(a,dt,24);
-        if(bd<16 && !best.partnerId){ // pair up
+        if(bd<16 && !best.partnerId){ // pair up (a lasting bond — but they still roam independently)
           a.partnerId=best.id; best.partnerId=a.id;
           a.H.oxytocin=clamp(a.H.oxytocin+45); best.H.oxytocin=clamp(best.H.oxytocin+45);
           a.H.dopamine=clamp(a.H.dopamine+25); best.H.dopamine=clamp(best.H.dopamine+25);
-          const f=a.sex==='F'?a:best, m=a.sex==='M'?a:best;
-          if(f.surname==='Formica'&&m.surname!=='Formica'){} // keep
           log("💞 <b>"+a.name+"</b> and <b>"+best.name+"</b> have paired up.");
         }
       } else { wander(a); moveTo(a,dt,18); }
@@ -393,21 +402,14 @@ function step(dt){
       }
       moveTo(a,dt,18);
       if(Math.hypot(nursery.x-a.x,nursery.y-a.y)<40){ layEggs(a); }
-    } else if(goal==="bond" && partner){
-      // settle beside the partner; pick a resting spot only occasionally (no per-frame spinning)
-      if(!a._bondT || (a._bondT-=1)<0 || Math.hypot(a.tx-partner.x,a.ty-partner.y)>34){
-        const ang=Math.random()*6.283, rad=rnd(11,19);
-        a.tx=partner.x+Math.cos(ang)*rad; a.ty=partner.y+Math.sin(ang)*rad; a._bondT=ri(45,110);
-      }
-      moveTo(a,dt,10);
-      // mating
-      if(a.sex==='F' && !a.pregnant && nearPartner && a.libidoCD<=0 &&
-         a.H.libido>62 && partner.H.libido>55 && a.hunger<60 && partner.hunger<70 &&
-         adults.length<MAXPOP && Math.random()<dt*4){
-         a.pregnant=true; a.gest=rnd(4,6); a.libidoCD=18; partner.libidoCD=12;
-         a.H.libido=15; partner.H.libido=20;
-         a.H.oxytocin=clamp(a.H.oxytocin+30); partner.H.oxytocin=clamp(partner.H.oxytocin+30);
-         a.H.dopamine=clamp(a.H.dopamine+35); partner.H.dopamine=clamp(partner.H.dopamine+35);
+    } else if(goal==="mate" && partner){
+      // briefly converge on the partner to mate, then disperse and resume their own routine
+      a.tx=partner.x; a.ty=partner.y; moveTo(a,dt,24);
+      if(Math.hypot(partner.x-a.x,partner.y-a.y)<18 && !f.pregnant && f.libidoCD<=0 && Math.random()<dt*6){
+        f.pregnant=true; f.gest=rnd(4,6);
+        a.libidoCD=20; partner.libidoCD=20; a.H.libido=15; partner.H.libido=18;
+        a.H.oxytocin=clamp(a.H.oxytocin+30); partner.H.oxytocin=clamp(partner.H.oxytocin+30);
+        a.H.dopamine=clamp(a.H.dopamine+34); partner.H.dopamine=clamp(partner.H.dopamine+34);
       }
     } else { wander(a); moveTo(a,dt,15); }
 
@@ -625,6 +627,8 @@ const HKEYS=[['cortisol','Cortisol (stress)','var(--cortisol)'],['adrenaline','A
   ['dopamine','Dopamine','var(--dopamine)'],['serotonin','Serotonin','var(--serotonin)'],
   ['oxytocin','Oxytocin (bonding)','var(--oxytocin)'],['libido','Libido','var(--libido)']];
 function hormHTML(H){ return HKEYS.map(([k,lab,c])=>`<div class="horm"><div class="lab"><span>${lab}</span><span>${Math.round(H[k])}</span></div><div class="bar"><i style="width:${clamp(H[k])}%;background:${c}"></i></div></div>`).join(''); }
+function miniHorm(H){ return '<div class="mini">'+HKEYS.map(([k,lab,c])=>`<div class="mb" title="${lab}: ${Math.round(H[k])}"><i style="width:${clamp(H[k])}%;background:${c}"></i></div>`).join('')+'</div>'; }
+function selectAnt(id){ selId=id; updateUI(1); }
 
 let uiT=0;
 function updateUI(dt){
@@ -641,11 +645,14 @@ function updateUI(dt){
   document.getElementById('couples').textContent=Math.floor(adults.filter(a=>a.partnerId).length/2);
   document.getElementById('bd').textContent=born+' / '+died;
   document.getElementById('foodc').textContent=food.length;
-  // colony averages
-  const avg={}; HKEYS.forEach(([k])=>avg[k]=0);
-  adults.forEach(a=>HKEYS.forEach(([k])=>avg[k]+=a.H[k]));
-  HKEYS.forEach(([k])=>avg[k]= adults.length?avg[k]/adults.length:0);
-  document.getElementById('colonyHorm').innerHTML='<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Average across '+adults.length+' adults</div>'+hormHTML(avg);
+  // per-ant hormone strips — each adult gets its own (click to inspect)
+  let rows='';
+  for(const a of adults){
+    rows+='<div class="antrow'+(a.id===selId?' sel':'')+'" onclick="selectAnt('+a.id+')">'+
+      '<div class="nm"><b>'+a.name+'</b><span>'+(a.sex==='M'?'♂':'♀')+(a.pregnant?' 🥚':'')+'</span></div>'+
+      miniHorm(a.H)+'</div>';
+  }
+  document.getElementById('colonyHorm').innerHTML='<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Each adult’s hormones · '+adults.length+' alive</div>'+(rows||'<div class="empty" style="padding:6px">No adults yet.</div>');
   // inspector
   const a=selId?antById(selId):null; const box=document.getElementById('inspect');
   if(!a){ box.innerHTML='<h2>Ant Inspector</h2><div class="empty">Click any ant in the farm to read its mind and monitor its hormones.</div>'; return; }
@@ -670,100 +677,103 @@ cv.addEventListener('click',e=>{
   let best=null,bd=22; for(const a of ants){ const d=Math.hypot(a.x-mx,a.y-my); if(d<bd){bd=d;best=a;} }
   selId=best?best.id:null; updateUI(1);
 });
-document.getElementById('play').addEventListener('click',e=>{ paused=!paused; e.target.textContent=paused?'▶ Play':'⏸ Pause'; e.target.classList.toggle('on',!paused); });
+/* play/pause and reset removed — this is a single, always-live shared world */
 
-/* ---------- persistence: localStorage cache + Supabase cloud sync ---------- */
-const SAVE_KEY='formica_colony_v1';
+/* ---------- shared world: one live colony everyone watches (Supabase broadcast) ---------- */
 const SUPA_URL="https://wtgsxzznpxexlpzsgiml.supabase.co";
 const SUPA_KEY="sb_publishable_8g7vEi7ndEyrFHT2fooZ2A_0vX8cAoB";
-const COLONY_ID="main";
+const COLONY_ID="main", LEASE_ID="broadcaster";
 const SUPA_H={apikey:SUPA_KEY, Authorization:"Bearer "+SUPA_KEY, "Content-Type":"application/json"};
+const CLIENT_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
+const BROADCAST_MS=1200, POLL_MS=1200, LEASE_TTL=6000, LEASE_EVERY=2500;
+let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0;
+let interpA=null, interpB=null, interpStart=0;
 
-function snapshot(){ return {v:1, lastSimDay:simDay, _id, born, died, usedNames:[...usedNames], ants, food, selId}; }
-function cloudStatus(t){ const el=document.getElementById('cloudLine'); if(el) el.textContent="☁ "+t; }
-function applySave(d){
-  if(!d||!Array.isArray(d.ants)||!d.ants.length) return false;
-  const now=realNow(), delta=now-(typeof d.lastSimDay==='number'?d.lastSimDay:now);
+function snapshot(){ return {v:2, lastSimDay:simDay, _id, born, died, usedNames:[...usedNames], ants, food}; }
+function ensureH(a){ if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10}; }
+function setStatus(){
+  const el=document.getElementById('cloudLine'); const b=document.getElementById('livebadge');
+  if(el) el.textContent = role==="broadcaster"
+    ? "🔴 Live — this tab is running the colony for everyone"
+    : "👀 Watching the live colony — same view as everyone";
+  if(b) b.textContent="🔴 LIVE";
+}
+function applyState(d, shiftAges){
+  if(!d||!Array.isArray(d.ants)) return false;
+  const now=realNow(); const delta = shiftAges ? (now-(typeof d.lastSimDay==='number'?d.lastSimDay:now)) : 0;
   ants=d.ants; food=Array.isArray(d.food)?d.food:[]; born=d.born||0; died=d.died||0;
-  usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); selId=d.selId||null;
-  simDay=now;
-  for(const a of ants){                    // shift birthdays so nothing ages while the colony was idle
-    a.born=(a.born||0)+delta;
-    a.x=clamp(a.x,W*0.04,W*0.96); a.y=clamp(a.y,SKY()+22,H-22);
-    if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10};
+  usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); simDay=now;
+  for(const a of ants){ a.born=(a.born||0)+delta; a.x=clamp(a.x,W*0.04,W*0.96); a.y=clamp(a.y,SKY()+22,H-22); ensureH(a); }
+  nursery={x:W*0.5,y:H*0.62}; return true;
+}
+function freshColony(){ ants=[]; food=[]; born=0; died=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null; simDay=realNow(); seed(); }
+async function readRow(id){ try{ const r=await fetch(SUPA_URL+"/rest/v1/colony_saves?id=eq."+id+"&select=data",{headers:SUPA_H});
+  if(!r.ok) return null; const rows=await r.json(); return rows&&rows[0]?rows[0].data:null; }catch(e){ return null; } }
+async function writeRow(id,data){ try{ const r=await fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",
+  headers:{...SUPA_H,Prefer:"resolution=merge-duplicates,return=minimal"},
+  body:JSON.stringify([{id,data,updated_at:new Date().toISOString()}])}); return r.ok; }catch(e){ return false; } }
+// elect a single broadcaster via a short lease; everyone else just watches
+async function tickLease(){
+  const lease=await readRow(LEASE_ID), now=Date.now();
+  const mine = lease && lease.owner===CLIENT_ID;
+  const stale = !lease || !lease.ts || (now-lease.ts)>LEASE_TTL;
+  if(mine || stale){
+    if(await writeRow(LEASE_ID,{owner:CLIENT_ID, ts:now}) && role!=="broadcaster"){
+      role="broadcaster";
+      const d=await readRow(COLONY_ID);
+      if(d && Array.isArray(d.ants) && d.ants.length) applyState(d,true); else freshColony();
+      log("📡 This tab is now running the live colony for everyone.");
+    }
+  } else if(role!=="viewer"){ role="viewer"; }
+  setStatus();
+}
+function posMap(list){ const m={}; for(const a of list) m[a.id]={x:a.x,y:a.y,dir:a.dir||0}; return m; }
+async function pollState(){
+  const d=await readRow(COLONY_ID);
+  if(d && Array.isArray(d.ants)){
+    born=d.born||0; died=d.died||0;
+    interpA = interpB || {map:posMap(d.ants)};
+    interpB = {map:posMap(d.ants)};
+    interpStart=performance.now();
+    ants=d.ants; food=Array.isArray(d.food)?d.food:[]; for(const a of ants) ensureH(a);
+    nursery={x:W*0.5,y:H*0.62};
   }
-  nursery={x:W*0.5,y:H*0.62};
-  return true;
 }
-function saveLocal(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot())); }catch(e){} }
-function loadLocal(){ try{ const raw=localStorage.getItem(SAVE_KEY); return raw?applySave(JSON.parse(raw)):false; }catch(e){ return false; } }
-async function cloudSave(){
-  try{
-    const r=await fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",
-      headers:{...SUPA_H, Prefer:"resolution=merge-duplicates,return=minimal"},
-      body:JSON.stringify([{id:COLONY_ID, data:snapshot(), updated_at:new Date().toISOString()}])});
-    cloudStatus(r.ok ? ("Synced · "+new Date().toLocaleTimeString()) : ("Sync error "+r.status));
-  }catch(e){ cloudStatus("Offline — saved on this device"); }
-}
-async function cloudLoad(){
-  try{
-    const r=await fetch(SUPA_URL+"/rest/v1/colony_saves?id=eq."+COLONY_ID+"&select=data",{headers:SUPA_H});
-    if(!r.ok) return null; const rows=await r.json(); return rows&&rows[0]?rows[0].data:null;
-  }catch(e){ return null; }
-}
-function saveState(){ saveLocal(); cloudSave(); }
-function freshColony(){
-  ants=[]; food=[]; born=0; died=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null;
-  simDay=realNow(); seed();
+function applyInterp(){   // smooth viewer motion between ~1.2s snapshots
+  if(!interpA||!interpB) return;
+  const t=Math.min(1,(performance.now()-interpStart)/POLL_MS);
+  for(const a of ants){ const pa=interpA.map[a.id], pb=interpB.map[a.id];
+    if(pb){ const ax=pa?pa.x:pb.x, ay=pa?pa.y:pb.y; a.x=ax+(pb.x-ax)*t; a.y=ay+(pb.y-ay)*t; a.dir=pb.dir; } }
 }
 
 /* ---------- boot ---------- */
 resize();   // size canvas + build sand now that all helpers exist
-if(!loadLocal()) freshColony();             // instant display from local cache (or fresh)
-(async function reconcileCloud(){           // then let Supabase (source of truth) take over
-  cloudStatus("connecting…");
-  const cloud=await cloudLoad();
-  if(cloud && applySave(cloud)){
-    log("☁ Colony synced from Supabase — "+ants.length+" ant"+(ants.length>1?"s":"")+", shared across your devices.");
-    cloudStatus("Synced (cloud)");
-  } else {
-    cloudStatus("New cloud colony");
-  }
-  saveState();                              // ensure the cloud row exists / is current
+{ const el=document.getElementById('cloudLine'); if(el) el.textContent="☁ connecting to live colony…"; }
+(async function boot(){
+  const d=await readRow(COLONY_ID);
+  if(d && Array.isArray(d.ants) && d.ants.length) applyState(d,true);   // render immediately
+  await tickLease();                                                    // broadcaster if free, else viewer
+  requestAnimationFrame(loop);
 })();
-setInterval(saveState, 5000);
-window.addEventListener('beforeunload', ()=>{ saveLocal();
-  try{ fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",keepalive:true,
-    headers:{...SUPA_H,Prefer:"resolution=merge-duplicates,return=minimal"},
-    body:JSON.stringify([{id:COLONY_ID,data:snapshot(),updated_at:new Date().toISOString()}])}); }catch(e){}
-});
-if(document.addEventListener) document.addEventListener('visibilitychange',()=>{ if(document.hidden) saveState(); });
-document.getElementById('reset').addEventListener('click',()=>{
-  if(typeof confirm==='function' && !confirm('Start a brand-new colony? This permanently erases the current one (local + cloud).')) return;
-  try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
-  freshColony(); saveState();
-});
-let last=performance.now(), yearDone=false;
+window.addEventListener('beforeunload', ()=>{ if(role==="broadcaster"){ try{ fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",keepalive:true,
+  headers:{...SUPA_H,Prefer:"resolution=merge-duplicates,return=minimal"},
+  body:JSON.stringify([{id:COLONY_ID,data:snapshot(),updated_at:new Date().toISOString()}])}); }catch(e){} } });
+
+let last=performance.now();
 function loop(now){
   let dtReal=(now-last)/1000; last=now; if(dtReal>0.1)dtReal=0.1;
-  if(!paused && !yearDone){
-    moveDt=dtReal;                       // visible motion runs in real time
-    const dtDays=dtReal*1000/DAY_MS*speed;
-    simDay+=dtDays; step(dtDays);
-    if(simDay>=365){ yearDone=true; finishYear(); }
+  if(role==="broadcaster"){
+    moveDt=dtReal; const dtDays=dtReal*1000/DAY_MS*speed; simDay+=dtDays; step(dtDays);
+    if(now-lastBroadcast>BROADCAST_MS){ lastBroadcast=now; writeRow(COLONY_ID, snapshot()); }
+  } else {
+    simDay=realNow();
+    if(now-lastPoll>POLL_MS){ lastPoll=now; pollState(); }
+    applyInterp();
   }
-  updateUI(dtReal*speed);
-  draw();
+  if(now-lastLease>LEASE_EVERY){ lastLease=now; tickLease(); }
+  updateUI(dtReal); draw();
   requestAnimationFrame(loop);
 }
-function finishYear(){
-  paused=true; document.getElementById('play').textContent='▶ Play';
-  const adults=ants.filter(a=>stage(a)==='adult').length;
-  log("🎉 <b>ONE YEAR COMPLETE.</b> Population <b>"+ants.length+"</b> ("+adults+" adults). Lifetime births "+born+", deaths "+died+". Press Play to keep watching year 2.");
-  // allow continuing into year 2
-  const p=document.getElementById('play'); p.addEventListener('click',()=>{yearDone=false;},{once:true});
-}
-requestAnimationFrame(loop);
 fetchWeather(); setInterval(fetchWeather, 15*60*1000);   // live New Richmond weather, refreshed every 15 min
 </script>
 </body>
