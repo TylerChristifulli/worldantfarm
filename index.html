@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Formica — A Thinking Ant Farm</title>
+<style>
+  :root{
+    --bg:#0d0b08; --panel:#16130d; --panel2:#1f1a11; --line:#2c2517;
+    --ink:#efe7d2; --muted:#a99c7d; --gold:#e7b53c; --accent:#7fd1ff;
+    --cortisol:#ff5a5a; --adrenaline:#ff9b3d; --dopamine:#ffd23d;
+    --serotonin:#5ee07a; --oxytocin:#ff6fae; --libido:#c88bff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:"Segoe UI",Roboto,system-ui,sans-serif;overflow:hidden}
+  #app{display:grid;grid-template-columns:1fr 340px;grid-template-rows:auto 1fr;
+    height:100vh;gap:0}
+  header{grid-column:1/3;display:flex;align-items:center;gap:18px;padding:8px 16px;
+    background:linear-gradient(180deg,#1b1710,#13100a);border-bottom:1px solid var(--line)}
+  header h1{font-size:16px;margin:0;letter-spacing:.5px;color:var(--gold);white-space:nowrap}
+  header h1 small{color:var(--muted);font-weight:400;font-size:11px;letter-spacing:0}
+  .clock{font-variant-numeric:tabular-nums;font-size:13px;color:var(--ink)}
+  .clock b{color:var(--gold)}
+  .season{padding:2px 10px;border-radius:20px;font-size:11px;border:1px solid var(--line);background:#000}
+  .yearbar{flex:1;height:8px;background:#000;border:1px solid var(--line);border-radius:6px;overflow:hidden;min-width:80px}
+  .yearbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#5ee07a,#e7b53c,#ff9b3d,#7fd1ff)}
+  .ctrls{display:flex;gap:6px;align-items:center}
+  button{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:7px;padding:5px 10px;font-size:12px;cursor:pointer}
+  button:hover{border-color:var(--gold)}
+  button.on{background:var(--gold);color:#1a1407;border-color:var(--gold);font-weight:600}
+  #stage{position:relative;overflow:hidden;background:#000}
+  canvas{display:block;width:100%;height:100%}
+  aside{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:12px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-bottom:11px}
+  .card h2{margin:0 0 9px;font-size:12px;letter-spacing:.8px;text-transform:uppercase;color:var(--muted)}
+  .stat{display:flex;justify-content:space-between;font-size:12px;margin:3px 0}
+  .stat span:last-child{color:var(--gold);font-variant-numeric:tabular-nums}
+  .horm{margin:7px 0}
+  .horm .lab{display:flex;justify-content:space-between;font-size:11px;margin-bottom:2px}
+  .horm .lab span:last-child{font-variant-numeric:tabular-nums;color:var(--muted)}
+  .bar{height:7px;background:#000;border-radius:5px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0%;transition:width .4s}
+  .who{font-size:15px;color:var(--ink);margin-bottom:2px}
+  .who .sex{font-size:12px}
+  .badge{display:inline-block;font-size:10px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);color:var(--muted);margin-right:5px}
+  .thought{font-style:italic;color:#d8cdb0;font-size:12.5px;background:#000;border:1px solid var(--line);
+    border-radius:9px;padding:8px 10px;margin-top:8px;min-height:34px;line-height:1.35}
+  #log{font-size:11.5px;line-height:1.5;max-height:210px;overflow-y:auto}
+  #log div{padding:2px 0;border-bottom:1px dashed #221d12;color:var(--muted)}
+  #log div b{color:var(--ink)}
+  .hint{font-size:11px;color:var(--muted);text-align:center;margin-top:4px}
+  .empty{font-size:12px;color:var(--muted);text-align:center;padding:14px 4px;line-height:1.5}
+  @media(max-width:820px){#app{grid-template-columns:1fr}aside{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🐜 FORMICA <small>a thinking ant farm</small></h1>
+    <div class="clock">Day <b id="day">1</b> / 365 &nbsp;·&nbsp; <b id="tod">06:00</b> &nbsp;·&nbsp; Year <b id="yr">1</b></div>
+    <span class="season" id="season">Spring</span>
+    <span class="season" id="wx" title="Live weather, New Richmond WI">⛅ —</span>
+    <div class="yearbar"><i id="yearfill"></i></div>
+    <div class="ctrls">
+      <button id="play" class="on">⏸ Pause</button>
+      <button id="reset" title="Start a brand-new colony">↺ Reset</button>
+    </div>
+  </header>
+
+  <div id="stage"><canvas id="cv"></canvas></div>
+
+  <aside>
+    <div class="card">
+      <h2>Colony Vitals</h2>
+      <div class="stat"><span>Population</span><span id="pop">2</span></div>
+      <div class="stat"><span>Couples</span><span id="couples">0</span></div>
+      <div class="stat"><span>Born / Died</span><span id="bd">0 / 0</span></div>
+      <div class="stat"><span>Food in farm</span><span id="foodc">0</span></div>
+      <div class="stat"><span>Weather</span><span id="wxStat">—</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:1px" id="weatherLine">Syncing New Richmond weather…</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:1px" id="cloudLine">☁ Cloud: connecting…</div>
+      <div style="margin-top:9px" id="colonyHorm"></div>
+    </div>
+
+    <div class="card" id="inspect">
+      <h2>Ant Inspector</h2>
+      <div class="empty">Click any ant in the farm to read its mind and monitor its hormones.</div>
+    </div>
+
+    <div class="card">
+      <h2>Colony Journal</h2>
+      <div id="log"></div>
+    </div>
+    <div class="hint">Hormones drive every choice. Watch cortisol climb in winter.</div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+/* ---------- setup ---------- */
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const stageEl = document.getElementById('stage');
+let W=0,H=0,DPR=Math.min(2,window.devicePixelRatio||1);
+const tunnel = document.createElement('canvas'); const tctx = tunnel.getContext('2d');
+const sand = document.createElement('canvas'); const sctx = sand.getContext('2d');
+function resize(){
+  W=stageEl.clientWidth; H=stageEl.clientHeight;
+  cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  const ow=tunnel.width, oh=tunnel.height;
+  if(ow!==W*DPR||oh!==H*DPR){
+    const tmp=document.createElement('canvas');tmp.width=ow;tmp.height=oh;
+    if(ow)tmp.getContext('2d').drawImage(tunnel,0,0);
+    tunnel.width=W*DPR; tunnel.height=H*DPR; tctx.setTransform(DPR,0,0,DPR,0,0);
+    if(ow)tctx.drawImage(tmp,0,0,ow/DPR,oh/DPR,0,0,W,H);
+  }
+  buildSand();
+}
+// Pre-render a grainy sand background once per resize (cheap to blit each frame)
+function buildSand(){
+  if(!W||!H)return;
+  sand.width=W*DPR; sand.height=H*DPR; sctx.setTransform(DPR,0,0,DPR,0,0);
+  const sky=SKY();
+  // sky strip
+  const sg=sctx.createLinearGradient(0,0,0,sky);
+  sg.addColorStop(0,'#bfe6f7'); sg.addColorStop(1,'#e4f3fb');
+  sctx.fillStyle=sg; sctx.fillRect(0,0,W,sky);
+  // warm sand body
+  const g=sctx.createLinearGradient(0,sky,0,H);
+  g.addColorStop(0,'#e7caa0'); g.addColorStop(0.45,'#d2ad75'); g.addColorStop(1,'#b98f52');
+  sctx.fillStyle=g; sctx.fillRect(0,sky,W,H-sky);
+  // diagonal sediment banding
+  sctx.save(); sctx.globalAlpha=0.06;
+  for(let y=sky;y<H;y+=rnd(14,30)){ sctx.fillStyle=Math.random()<0.5?'#8a6536':'#f0dcb4';
+    sctx.beginPath(); sctx.moveTo(0,y); sctx.lineTo(W,y+rnd(-12,12)); sctx.lineTo(W,y+rnd(6,18)); sctx.lineTo(0,y+rnd(6,18)); sctx.fill(); }
+  sctx.restore();
+  // grain speckle
+  const grains=Math.floor((W*(H-sky))/22);
+  for(let i=0;i<grains;i++){
+    const x=Math.random()*W, y=sky+Math.random()*(H-sky), r=Math.random()*1.3+0.3;
+    const light=Math.random()<0.5;
+    sctx.fillStyle=light?'rgba(255,244,214,0.5)':'rgba(120,86,42,0.35)';
+    sctx.fillRect(x,y,r,r);
+  }
+  // glass top edge
+  sctx.fillStyle='rgba(255,255,255,0.10)'; sctx.fillRect(0,sky,W,2);
+}
+window.addEventListener('resize',resize); // initial resize() called near bottom, after helpers are defined
+
+/* ---------- helpers ---------- */
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const ri=(a,b)=>Math.floor(rnd(a,b+1));
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+const clamp=(v,a=0,b=100)=>v<a?a:v>b?b:v;
+const SKY=()=>H*0.13;
+
+/* ---------- names ---------- */
+const MN=["Atlas","Felix","Oscar","Hugo","Milo","Casper","Bruno","Gideon","Ezra","Linus","Otto","Cyrus","Jasper","Dexter","Roman"];
+const FN=["Ada","Iris","Hazel","Pearl","Vera","Luna","Mabel","Cleo","Ivy","Opal","Greta","Nora","Esme","Wren","Juno"];
+let usedNames=new Set(["Adam","Eve"]);
+function newName(sex){ const pool=sex==='M'?MN:FN; let n,t=0; do{n=pick(pool);t++}while(usedNames.has(n)&&t<40); if(usedNames.has(n))n=n+ri(2,99); usedNames.add(n); return n; }
+
+/* ---------- thought pools ---------- */
+const TH={
+  stressed:["Everything is too loud. The walls feel close.","I keep bracing for something bad.","Why can't I just relax for one minute?","My heart won't slow down.","I should have stored more food. I should have, I should have…"],
+  hungry:["I'd dig to the core of the earth for one crumb.","Is anyone else this hungry, or is it just me?","Food. Food. Only food exists.","My stomach is writing me angry letters."],
+  love:["I'd build a hundred tunnels for you.","Being near you quiets all the noise in my head.","Is it warm in this chamber, or is that just us?","I never knew a colony could feel like home until now.","Let's grow old in these tunnels together."],
+  elated:["Best. Crumb. Ever. I'm telling everyone.","I love this little life of ours!","Found a feast! Today is a good day to be an ant.","I could dig forever feeling like this."],
+  content:["Dig, eat, love, rest. What more is there?","The colony hums and all is well.","I think I'm actually happy. Don't jinx it.","Peace. Just for a moment, peace."],
+  lonely:["Where is everyone? I'd give anything for company.","I wonder if there's someone out there for me.","These tunnels feel emptier than they should.","I'm tired of foraging alone."],
+  parent:["The little ones are growing so fast.","I'll protect this brood with everything I have.","Did you hear that? I think an egg moved!","Sleep, little larvae. The colony's got you."],
+  old:["My legs aren't what they were. But what a life.","I've seen many seasons turn. This one feels final.","I hope I taught the young ones well.","Time moves strangely when you've lived this long."],
+  winter:["The cold seeps into the deepest tunnels.","Ration everything. Spring feels impossibly far.","Huddle close. We only survive this together.","I dream of summer crumbs."]
+};
+
+/* ---------- world state ---------- */
+let ants=[], food=[], bubbles=[];
+let simDay=0, born=0, died=0, paused=false, speed=1;  // set from real clock at startup (see realNow)
+// Anchor sim time to the real-world date & time: day-of-year + fraction of the 24h day.
+function realNow(){
+  const n=new Date();
+  const yearStart=new Date(n.getFullYear(),0,0);              // Dec 31 of prior year
+  const dayOfYear=Math.floor((n-yearStart)/86400000);         // 1-based day of the year
+  const todFrac=(n.getHours()+n.getMinutes()/60+n.getSeconds()/3600)/24;
+  return (dayOfYear-1)+todFrac;
+}
+const DAY_MS=24*60*60*1000;   // real time = sim time: one simulated day takes a full 24 hours
+let nursery={x:0,y:0};
+let selId=null;
+const MAXPOP=58;
+
+function seasonOf(d){ const x=((d%365)+365)%365;
+  if(x<91)return"Spring"; if(x<182)return"Summer"; if(x<273)return"Autumn"; return"Winter"; }
+
+function log(html){ const l=document.getElementById('log');
+  const e=document.createElement('div'); e.innerHTML="<i style='color:#5a513a'>D"+Math.floor(simDay+1)+"</i> · "+html;
+  l.prepend(e); while(l.children.length>120)l.removeChild(l.lastChild); }
+
+/* ---------- live weather: New Richmond, WI ---------- */
+const WX={lat:45.123, lon:-92.537, place:"New Richmond, WI"};
+let weather={ok:false,tempF:null,feels:null,precip:0,code:0,wind:0,cloud:0,isDay:1,label:"—",emoji:"⛅",fetched:0};
+let wxActivity=1;
+let moveDt=0;            // real seconds elapsed this frame — drives visible motion/digging
+const MOVE=1.6;          // px/sec scaling so ants walk & tunnel at a lifelike real-time pace
+function wmo(code){const m={0:["Clear","☀️"],1:["Mainly clear","🌤️"],2:["Partly cloudy","⛅"],3:["Overcast","☁️"],
+ 45:["Fog","🌫️"],48:["Rime fog","🌫️"],51:["Light drizzle","🌦️"],53:["Drizzle","🌦️"],55:["Hvy drizzle","🌧️"],
+ 56:["Frz drizzle","🌧️"],57:["Frz drizzle","🌧️"],61:["Light rain","🌦️"],63:["Rain","🌧️"],65:["Heavy rain","🌧️"],
+ 66:["Frz rain","🌧️"],67:["Frz rain","🌧️"],71:["Light snow","🌨️"],73:["Snow","🌨️"],75:["Heavy snow","❄️"],
+ 77:["Snow grains","🌨️"],80:["Showers","🌦️"],81:["Showers","🌧️"],82:["Violent showers","⛈️"],
+ 85:["Snow showers","🌨️"],86:["Snow showers","❄️"],95:["Thunderstorm","⛈️"],96:["T-storm hail","⛈️"],99:["T-storm hail","⛈️"]};
+ return m[code]||["—","⛅"];}
+function isPrecipCode(c){return (c>=51&&c<=67)||(c>=71&&c<=86)||(c>=95);}
+function isSnowCode(c){return (c>=71&&c<=77)||c===85||c===86;}
+async function fetchWeather(){
+ try{
+  const u="https://api.open-meteo.com/v1/forecast?latitude="+WX.lat+"&longitude="+WX.lon+
+   "&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,cloud_cover,is_day"+
+   "&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=America%2FChicago";
+  const r=await fetch(u); const j=await r.json(); const c=j.current; if(!c)throw 0;
+  const [lab,emo]=wmo(c.weather_code);
+  weather={ok:true,tempF:c.temperature_2m,feels:c.apparent_temperature,precip:c.precipitation||0,
+   code:c.weather_code,wind:c.wind_speed_10m||0,cloud:c.cloud_cover||0,isDay:c.is_day,label:lab,emoji:emo,fetched:Date.now()};
+  log("⛅ Weather synced — "+WX.place+": "+Math.round(weather.tempF)+"°F, "+lab+
+   (weather.wind?(", wind "+Math.round(weather.wind)+" mph"):"")+(weather.precip?(", "+weather.precip+'" precip'):"")+".");
+ }catch(e){ weather.ok=false; log("⛅ Weather feed unavailable — using seasonal estimates."); }
+ updateWeatherUI();
+}
+function updateWeatherUI(){
+ const el=document.getElementById('wx'); if(el) el.textContent = weather.ok?(weather.emoji+" "+Math.round(weather.tempF)+"°F "+weather.label):"⛅ —";
+ const s=document.getElementById('wxStat'); if(s) s.textContent = weather.ok?(Math.round(weather.tempF)+"°F "+weather.label):"—";
+ const w2=document.getElementById('weatherLine'); if(w2) w2.innerHTML = weather.ok
+  ? (WX.place+" · feels "+Math.round(weather.feels)+"°F · wind "+Math.round(weather.wind)+" mph"+(weather.precip?(" · "+weather.precip+'" precip'):""))
+  : "Weather feed unavailable — seasonal estimates in use";
+}
+// translate live weather into colony stressors
+function weatherMods(){
+ if(!weather.ok) return {cortisol:0, foodMult:1, activity:1, cloudDim:0};
+ const t=weather.tempF;
+ const cold = t<55 ? Math.min(45,(55-t)*0.7) : 0;
+ const heat = t>86 ? Math.min(35,(t-86)*0.8) : 0;
+ let wet  = (weather.precip>0||isPrecipCode(weather.code)) ? 12 + Math.min(18,weather.precip*150) : 0;
+ if(weather.code>=95) wet+=12;
+ const windS = weather.wind>16 ? Math.min(15,(weather.wind-16)*0.5) : 0;
+ let foodMult=1;
+ if(weather.precip>0||isPrecipCode(weather.code)) foodMult*=0.5;
+ if(isSnowCode(weather.code)) foodMult*=0.5;
+ if(t<20) foodMult*=0.4; else if(t<35) foodMult*=0.7;
+ if(t>95) foodMult*=0.7;
+ foodMult=Math.max(0.15,foodMult);
+ let activity=1 - cold/90 - wet/120 - windS/60; activity=Math.max(0.45,Math.min(1,activity));
+ const cloudDim=(weather.cloud/100)*0.22 + (isPrecipCode(weather.code)?0.12:0);
+ return {cortisol: cold+heat+wet+windS, foodMult, activity, cloudDim};
+}
+const THW={
+ cold:["My legs have gone stiff in this cold.","Stay deep — it's brutal near the surface.","I can see my breath down here.","Why did we dig so shallow?"],
+ hot:["This heat is unbearable, even underground.","I'm melting. Where's the cool sand?","Too hot to forage — I'll wait for dusk."],
+ rain:["Water's seeping into the upper tunnels!","Everything smells of wet earth.","Careful — the chambers could flood.","I hate foraging in the rain."],
+ snow:["Snow above. The crumbs are buried.","Huddle for warmth, everyone.","Winter has us trapped inside."],
+ nice:["What a perfect day to forage.","The sun feels wonderful up top.","Days like this make the digging worth it."]
+};
+function weatherThought(a){
+ if(!weather.ok||Math.random()>0.45) return null;
+ const t=weather.tempF;
+ if(isSnowCode(weather.code)) return pick(THW.snow);
+ if(isPrecipCode(weather.code)) return pick(THW.rain);
+ if(t<32) return pick(THW.cold);
+ if(t>90) return pick(THW.hot);
+ if(t>=66&&t<=82&&weather.code<=2) return pick(THW.nice);
+ return null;
+}
+
+/* ---------- ant factory ---------- */
+let _id=1;
+function makeAnt(o){
+  const a=Object.assign({
+    id:_id++, name:"?", surname:"Formica", sex:'M',
+    x:rnd(W*0.3,W*0.7), y:rnd(SKY()+40,H-40),
+    vx:0,vy:0, tx:0,ty:0, retarget:0,
+    born:simDay, lifespan:rnd(210,330),
+    hunger:rnd(10,35), energy:rnd(60,100),
+    partnerId:null, parents:[],
+    pregnant:false, gest:0, libidoCD:0,
+    hue:0, thought:"", thTimer:0,
+    H:{cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10}
+  },o);
+  a.tx=a.x; a.ty=a.y;
+  a.hue = a.sex==='M'?205:330;
+  return a;
+}
+function ageDays(a){ return simDay-a.born; }
+function stage(a){ const g=ageDays(a);
+  if(g<6)return'egg'; if(g<14)return'larva'; if(g<22)return'pupa'; return'adult'; }
+
+/* founders */
+function seed(){
+  nursery={x:W*0.5,y:H*0.62};
+  ants.push(makeAnt({name:"Adam",sex:'M',born:simDay-30,x:W*0.42,y:H*0.5}));
+  ants.push(makeAnt({name:"Eve", sex:'F',born:simDay-30,x:W*0.58,y:H*0.5}));
+  for(let i=0;i<5;i++)spawnFood();
+  log("<b>Adam</b> and <b>Eve Formica</b> begin their colony. Two minds, one anthill.");
+}
+
+/* ---------- food ---------- */
+function spawnFood(){
+  food.push({x:rnd(W*0.08,W*0.92), y:rnd(SKY()+30,H-30), r:rnd(3,6)});
+}
+
+/* ---------- relationships ---------- */
+function related(a,b){
+  if(a.parents.includes(b.id)||b.parents.includes(a.id))return true;
+  for(const p of a.parents)if(b.parents.includes(p))return true; // siblings
+  return false;
+}
+function antById(id){ return ants.find(a=>a.id===id); }
+
+/* ---------- simulation step (dt in sim-days) ---------- */
+function step(dt){
+  const season=seasonOf(simDay);
+  const winter=season==='Winter', summer=season==='Summer';
+  const wx=weatherMods(); wxActivity=wx.activity;
+  // food spawning (seasonal base, scaled by live weather)
+  const fr = (winter?0.16: summer?0.55: season==='Spring'?0.45:0.33) * wx.foodMult;
+  if(food.length<80 && Math.random()<fr*dt*30) spawnFood();
+
+  const adults=ants.filter(a=>stage(a)==='adult');
+
+  for(const a of ants){
+    const st=stage(a);
+    a._stage=st;
+    // ---- aging / death ----
+    if(st==='adult'){
+      if(ageDays(a)>a.lifespan){ kill(a,"died peacefully of old age"); continue; }
+      if(a.hunger>=100){ a._starve=(a._starve||0)+dt; if(a._starve>7){kill(a,"starved");continue;} }
+      else a._starve=0;
+    }
+
+    if(st==='egg'||st==='larva'||st==='pupa'){
+      // brood: nestled in nursery, barely move, calm (re-target only occasionally)
+      if(!a._broodT || (a._broodT-=1)<0){ a.tx=nursery.x+rnd(-46,46); a.ty=nursery.y+rnd(-30,30); a._broodT=ri(120,260); }
+      moveTo(a,dt, st==='larva'?14:4);
+      a.H.cortisol=clamp(a.H.cortisol+(12-a.H.cortisol)*dt*0.5);
+      a.H.oxytocin=clamp(a.H.oxytocin+(60-a.H.oxytocin)*dt*0.4);
+      continue;
+    }
+
+    /* ===== ADULT behaviour & hormones ===== */
+    a.hunger=clamp(a.hunger+rnd(6,10)*dt);
+    a.energy=clamp(a.energy-3*dt + (a.energy<30?0:0));
+    a.libidoCD=Math.max(0,a.libidoCD-dt);
+
+    // crowding
+    let near=0; for(const o of adults){ if(o!==a){ const d=Math.hypot(o.x-a.x,o.y-a.y); if(d<70)near++; } }
+    const crowd=Math.max(0,near-3)*7;
+
+    const partner=a.partnerId?antById(a.partnerId):null;
+    if(a.partnerId && !partner){ a.partnerId=null; a.H.cortisol=clamp(a.H.cortisol+35); a.H.oxytocin=clamp(a.H.oxytocin-30); log("<b>"+a.name+"</b> lost their partner. Grief floods the tunnels."); }
+
+    // --- choose goal ---
+    let goal="wander";
+    if(a.hunger>55) goal="food";
+    else if(!a.partnerId && a.H.cortisol<80) goal="seekMate";
+    else if(partner) goal="bond";
+    if(a.pregnant && a.gest<=0) goal="nest";
+
+    // distance to partner
+    let nearPartner=0;
+    if(partner){ const d=Math.hypot(partner.x-a.x,partner.y-a.y); nearPartner=d<55?1:0; }
+
+    // ---- act on goal ----
+    if(goal==="food"){
+      let best=null,bd=1e9; for(const f of food){const d=Math.hypot(f.x-a.x,f.y-a.y); if(d<bd){bd=d;best=f;}}
+      if(best){ a.tx=best.x; a.ty=best.y; if(bd<10){ eat(a,best); } }
+      else { wander(a); }
+      moveTo(a,dt,26);
+    } else if(goal==="seekMate"){
+      let best=null,bd=1e9;
+      for(const o of adults){ if(o!==a && o.sex!==a.sex && !o.partnerId && !related(a,o) && o.H.cortisol<85){
+        const d=Math.hypot(o.x-a.x,o.y-a.y); if(d<bd){bd=d;best=o;} } }
+      if(best){ a.tx=best.x; a.ty=best.y; moveTo(a,dt,24);
+        if(bd<16 && !best.partnerId){ // pair up
+          a.partnerId=best.id; best.partnerId=a.id;
+          a.H.oxytocin=clamp(a.H.oxytocin+45); best.H.oxytocin=clamp(best.H.oxytocin+45);
+          a.H.dopamine=clamp(a.H.dopamine+25); best.H.dopamine=clamp(best.H.dopamine+25);
+          const f=a.sex==='F'?a:best, m=a.sex==='M'?a:best;
+          if(f.surname==='Formica'&&m.surname!=='Formica'){} // keep
+          log("💞 <b>"+a.name+"</b> and <b>"+best.name+"</b> have paired up.");
+        }
+      } else { wander(a); moveTo(a,dt,18); }
+    } else if(goal==="nest"){
+      if(!a._nestT || (a._nestT-=1)<0 || Math.hypot(a.tx-nursery.x,a.ty-nursery.y)>30){
+        a.tx=nursery.x+rnd(-20,20); a.ty=nursery.y+rnd(-15,15); a._nestT=ri(40,90);
+      }
+      moveTo(a,dt,18);
+      if(Math.hypot(nursery.x-a.x,nursery.y-a.y)<40){ layEggs(a); }
+    } else if(goal==="bond" && partner){
+      // settle beside the partner; pick a resting spot only occasionally (no per-frame spinning)
+      if(!a._bondT || (a._bondT-=1)<0 || Math.hypot(a.tx-partner.x,a.ty-partner.y)>34){
+        const ang=Math.random()*6.283, rad=rnd(11,19);
+        a.tx=partner.x+Math.cos(ang)*rad; a.ty=partner.y+Math.sin(ang)*rad; a._bondT=ri(45,110);
+      }
+      moveTo(a,dt,10);
+      // mating
+      if(a.sex==='F' && !a.pregnant && nearPartner && a.libidoCD<=0 &&
+         a.H.libido>62 && partner.H.libido>55 && a.hunger<60 && partner.hunger<70 &&
+         adults.length<MAXPOP && Math.random()<dt*4){
+         a.pregnant=true; a.gest=rnd(4,6); a.libidoCD=18; partner.libidoCD=12;
+         a.H.libido=15; partner.H.libido=20;
+         a.H.oxytocin=clamp(a.H.oxytocin+30); partner.H.oxytocin=clamp(partner.H.oxytocin+30);
+         a.H.dopamine=clamp(a.H.dopamine+35); partner.H.dopamine=clamp(partner.H.dopamine+35);
+      }
+    } else { wander(a); moveTo(a,dt,15); }
+
+    if(a.pregnant){ a.gest-=dt; if(a.gest<=0 && Math.hypot(nursery.x-a.x,nursery.y-a.y)>50){ /*head to nest handled by goal*/ } }
+
+    /* ---- hormone dynamics (move toward targets) ---- */
+    const wellFed=a.hunger<40;
+    const ageStress = ageDays(a)>a.lifespan*0.8 ? (ageDays(a)-a.lifespan*0.8)/(a.lifespan*0.2)*25 : 0;
+    const winterStress = (winter && !weather.ok)?22:0;   // real weather governs when available
+    const lonely = (!a.partnerId)?16:0;
+    const cortTarget = clamp(12 + a.hunger*0.35 + crowd + lonely + winterStress + ageStress + wx.cortisol - (nearPartner?12:0));
+    a.H.cortisol = clamp(a.H.cortisol + (cortTarget-a.H.cortisol)*Math.min(1,dt*0.8));
+    a.H.adrenaline = clamp(a.H.adrenaline*(Math.pow(0.25,dt)) ); // decays fast
+    a.H.dopamine = clamp(a.H.dopamine + (22-a.H.dopamine)*Math.min(1,dt*0.6));
+    const serTarget = clamp(62 - a.H.cortisol*0.55 + (a.partnerId?12:0) + (wellFed?10:-8));
+    a.H.serotonin = clamp(a.H.serotonin + (serTarget-a.H.serotonin)*Math.min(1,dt*0.25));
+    const oxyTarget = clamp(18 + (nearPartner?32:0) + (a.pregnant?20:0) + (a.partnerId?8:0));
+    a.H.oxytocin = clamp(a.H.oxytocin + (oxyTarget-a.H.oxytocin)*Math.min(1,dt*0.5));
+    if(a.partnerId && !a.pregnant && wellFed) a.H.libido=clamp(a.H.libido+7*dt);
+    if(a.pregnant) a.H.libido=clamp(a.H.libido-10*dt);
+
+    // random scare (predator vibration) — adrenaline + cortisol spike
+    if(Math.random()<dt*0.05){ a.H.adrenaline=clamp(a.H.adrenaline+rnd(30,60)); a.H.cortisol=clamp(a.H.cortisol+rnd(8,18)); }
+
+    // ---- thought ----
+    a.thTimer-=dt; if(a.thTimer<=0){ a.thought=chooseThought(a,winter); a.thTimer=rnd(2.5,5); }
+
+    // carve tunnel
+    carve(a.x,a.y, st==='adult'?7:4);
+  }
+}
+
+function chooseThought(a,winter){
+  const H=a.H;
+  if(H.cortisol>72) return pick(TH.stressed);
+  const wt=weatherThought(a); if(wt) return wt;
+  if(winter && H.cortisol>45 && Math.random()<0.5) return pick(TH.winter);
+  if(a.hunger>62) return pick(TH.hungry);
+  if(a.pregnant || a._stage==='adult' && ants.some(k=>k.parents.includes(a.id)&&['egg','larva','pupa'].includes(stage(k)))) {
+    if(Math.random()<0.6) return pick(TH.parent);
+  }
+  if(ageDays(a)>a.lifespan*0.85) return pick(TH.old);
+  if(H.oxytocin>58) return pick(TH.love);
+  if(!a.partnerId && H.cortisol<70 && Math.random()<0.6) return pick(TH.lonely);
+  if(H.dopamine>58) return pick(TH.elated);
+  if(H.serotonin>58) return pick(TH.content);
+  return pick([...TH.content,...TH.lonely]);
+}
+
+function eat(a,f){
+  food.splice(food.indexOf(f),1);
+  a.hunger=clamp(a.hunger-58); a.energy=clamp(a.energy+18);
+  a.H.dopamine=clamp(a.H.dopamine+28); a.H.cortisol=clamp(a.H.cortisol-10);
+}
+function wander(a){ if(Math.hypot(a.tx-a.x,a.ty-a.y)<14||(a.retarget-=1)<0){
+  a.tx=clamp(a.x+rnd(-150,150),W*0.05,W*0.95); a.ty=clamp(a.y+rnd(-110,110),SKY()+25,H-25); a.retarget=ri(20,60);} }
+function moveTo(a,dt,spd){
+  const dx=a.tx-a.x, dy=a.ty-a.y, d=Math.hypot(dx,dy)||1;
+  if(d<2.5) return;                      // arrived — hold still instead of jittering/spinning
+  const v=spd*MOVE*moveDt*wxActivity;    // real-time motion, independent of the 24h calendar scale
+  a.x+=dx/d*Math.min(v,d); a.y+=dy/d*Math.min(v,d);
+  if(d>4) a.dir=Math.atan2(dy,dx);       // only re-face when genuinely traveling
+}
+function layEggs(a){
+  const n=ri(1,4); a.pregnant=false; a.gest=0;
+  const partner=antById(a.partnerId);
+  const sn = partner?partner.surname:a.surname;
+  for(let i=0;i<n;i++){
+    if(ants.length>=MAXPOP+6)break;
+    const sex=Math.random()<0.5?'M':'F';
+    const baby=makeAnt({name:newName(sex),sex,surname:sn,born:simDay,
+      x:nursery.x+rnd(-30,30),y:nursery.y+rnd(-20,20),
+      parents:[a.id, a.partnerId].filter(Boolean), lifespan:rnd(200,320)});
+    ants.push(baby); born++;
+  }
+  a.H.oxytocin=clamp(a.H.oxytocin+35); a.H.dopamine=clamp(a.H.dopamine+25); a.H.cortisol=clamp(a.H.cortisol-12);
+  if(partner)partner.H.oxytocin=clamp(partner.H.oxytocin+25);
+  log("🥚 <b>"+a.name+"</b> laid <b>"+n+"</b> egg"+(n>1?"s":"")+" in the nursery.");
+}
+function kill(a,why){
+  died++; const i=ants.indexOf(a); if(i>=0)ants.splice(i,1);
+  const p=a.partnerId?antById(a.partnerId):null; if(p)p.partnerId=null;
+  if(selId===a.id)selId=null;
+  log("🪦 <b>"+a.name+" "+a.surname+"</b> "+why+" at "+Math.floor(ageDays(a))+" days.");
+}
+
+/* ---------- tunnels ---------- */
+function carve(x,y,r){
+  tctx.globalCompositeOperation='source-over';
+  const g=tctx.createRadialGradient(x,y,0,x,y,r*2);
+  g.addColorStop(0,'rgba(60,44,26,0.40)'); g.addColorStop(1,'rgba(60,44,26,0)');
+  tctx.fillStyle=g; tctx.beginPath(); tctx.arc(x,y,r*2,0,7); tctx.fill();
+}
+
+/* ---------- drawing ---------- */
+function draw(){
+  // sandy earth (pre-rendered) + dug tunnels
+  ctx.drawImage(sand,0,0,sand.width,sand.height,0,0,W,H);
+  ctx.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,W,H);
+  // surface line + grass
+  ctx.strokeStyle='#9c7a44'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,SKY()); ctx.lineTo(W,SKY()); ctx.stroke();
+  ctx.fillStyle='#3f6b3a';
+  for(let x=0;x<W;x+=11){ const h=6+((x*7)%9); ctx.beginPath(); ctx.moveTo(x,SKY()); ctx.lineTo(x+3,SKY()-h); ctx.lineTo(x+6,SKY()); ctx.fill(); }
+  // nursery chamber
+  ctx.fillStyle='rgba(231,181,60,0.07)'; ctx.strokeStyle='rgba(231,181,60,0.35)';
+  ctx.beginPath(); ctx.ellipse(nursery.x,nursery.y,58,40,0,0,7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='rgba(231,181,60,0.6)'; ctx.font='9px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('NURSERY',nursery.x,nursery.y-46);
+  // food
+  for(const f of food){ ctx.fillStyle='#cde06a'; ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,7); ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.arc(f.x+1,f.y+1,f.r*0.4,0,7); ctx.fill(); }
+  // ants
+  for(const a of ants) drawAnt(a);
+  // day / night tint based on time of day (sun elevation) + live cloud cover
+  const frac=simDay-Math.floor(simDay);
+  const ele=Math.sin((frac*24/24)*Math.PI*2 - Math.PI/2); // -1 midnight, +1 noon
+  const night=clamp((1-(ele+1)/2),0,1);
+  const wxd=weatherMods();
+  let nightA=Math.min(0.74, night*0.6 + wxd.cloudDim);
+  if(nightA>0.02){ ctx.fillStyle='rgba(12,16,38,'+nightA.toFixed(3)+')'; ctx.fillRect(0,0,W,H); }
+  // ants glow in the dark (additive light over the night shading)
+  const nightGlow=clamp((night-0.35)/0.65,0,1);
+  if(nightGlow>0.04) drawGlow(nightGlow);
+  if(weather.ok && isPrecipCode(weather.code)) drawPrecip(isSnowCode(weather.code));
+  // selected ring + bubble
+  const s=selId?antById(selId):null;
+  if(s){ ctx.strokeStyle=var_gold; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(s.x,s.y,16,0,7); ctx.stroke();
+    drawBubble(s); }
+}
+const var_gold='#e7b53c';
+function stressTint(a){ // returns rgb mixing body hue toward red by cortisol
+  const c=a.H.cortisol/100;
+  const base = a.sex==='M'? [120,150,200] : [205,140,170];
+  const red=[230,70,70];
+  return `rgb(${Math.round(base[0]+(red[0]-base[0])*c)},${Math.round(base[1]+(red[1]-base[1])*c)},${Math.round(base[2]+(red[2]-base[2])*c)})`;
+}
+function drawAnt(a){
+  const st=stage(a);
+  // ground shadow for contrast on sand
+  if(st!=='egg'){ ctx.fillStyle='rgba(70,45,18,0.22)';
+    ctx.beginPath(); ctx.ellipse(a.x,a.y+8,9,3.2,0,0,7); ctx.fill(); }
+  ctx.save(); ctx.translate(a.x,a.y);
+  if(st==='egg'){ ctx.fillStyle='#fbf3dc'; ctx.strokeStyle='rgba(120,86,42,0.7)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.ellipse(0,0,5,3.6,0,0,7); ctx.fill(); ctx.stroke(); ctx.restore(); return; }
+  if(st==='larva'){ ctx.fillStyle='#f7efd6'; ctx.strokeStyle='rgba(120,86,42,0.55)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.ellipse(0,0,7,4.5,0.5,0,7); ctx.fill(); ctx.stroke();
+    for(let i=-2;i<=2;i++){ctx.beginPath();ctx.moveTo(i*2.4,-3.5);ctx.lineTo(i*2.4,3.5);ctx.stroke();} ctx.restore(); return; }
+  const sc=(st==='pupa'?0.7:1)*1.15;
+  ctx.rotate(a.dir||0); ctx.scale(sc,sc);
+  const gaster=stressTint(a);          // colored belly = sex + stress readout
+  const dark='#241a0f';
+  // legs
+  ctx.strokeStyle=dark; ctx.lineWidth=1.2; ctx.lineCap='round';
+  for(let i=-1;i<=1;i++){ ctx.beginPath(); ctx.moveTo(i*3,0); ctx.lineTo(i*3-5,-7); ctx.moveTo(i*3,0); ctx.lineTo(i*3-5,7); ctx.stroke(); }
+  // body: dark head/thorax, colored gaster
+  ctx.fillStyle=gaster; ctx.beginPath(); ctx.ellipse(-7,0,5.6,4.4,0,0,7); ctx.fill();
+  ctx.strokeStyle='rgba(30,20,10,0.6)'; ctx.lineWidth=0.8; ctx.stroke();
+  ctx.fillStyle=dark; ctx.beginPath(); ctx.ellipse(0,0,3.7,3.1,0,0,7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7,0,3.9,3.4,0,0,7); ctx.fill();
+  // highlight on gaster
+  ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.beginPath(); ctx.ellipse(-8.5,-1.6,1.8,1.1,0,0,7); ctx.fill();
+  // antennae
+  ctx.strokeStyle=dark; ctx.beginPath(); ctx.moveTo(9,-1.5); ctx.lineTo(13.5,-4.5); ctx.moveTo(9,1.5); ctx.lineTo(13.5,4.5); ctx.stroke();
+  if(a.pregnant){ ctx.fillStyle='rgba(255,111,174,0.5)'; ctx.beginPath(); ctx.ellipse(-7,0,8.5,6.8,0,0,7); ctx.fill(); }
+  ctx.restore();
+  // name for adults (dark outline + light fill for legibility on sand)
+  if(st==='adult'){ ctx.font='600 10px sans-serif'; ctx.textAlign='center';
+    ctx.fillStyle='rgba(40,26,10,0.65)'; ctx.fillText(a.name,a.x+0.6,a.y-17+0.6);
+    ctx.fillStyle='rgba(255,251,238,0.96)'; ctx.fillText(a.name,a.x,a.y-17); }
+}
+function drawBubble(a){
+  const t=a.thought||"…"; ctx.font='11px Segoe UI, sans-serif';
+  const w=Math.min(180, ctx.measureText(t).width+16);
+  const lines=wrap(t,w-14); const h=14+lines.length*13;
+  let bx=a.x-w/2, by=a.y-22-h; bx=Math.max(6,Math.min(W-w-6,bx)); by=Math.max(6,by);
+  ctx.fillStyle='rgba(8,7,4,0.92)'; ctx.strokeStyle=var_gold; ctx.lineWidth=1;
+  roundRect(bx,by,w,h,8); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(a.x-5,by+h); ctx.lineTo(a.x+5,by+h); ctx.lineTo(a.x,by+h+8); ctx.fill();
+  ctx.fillStyle='#e9dfc4'; ctx.textAlign='left';
+  lines.forEach((ln,i)=>ctx.fillText(ln,bx+8,by+15+i*13));
+}
+function drawGlow(g){
+  const t=performance.now()/1000;
+  ctx.save(); ctx.globalCompositeOperation='lighter';
+  for(const a of ants){
+    const st=stage(a); if(st==='egg') continue;
+    const base = st==='adult'?16 : st==='pupa'?11 : 9;
+    const flick = 0.85 + 0.15*Math.sin(t*2.2 + a.id*1.7);   // gentle firefly pulse
+    const r = base*flick;
+    const al = 0.55*g*flick;
+    const grd=ctx.createRadialGradient(a.x,a.y,0,a.x,a.y,r);
+    grd.addColorStop(0,'rgba(170,255,190,'+al.toFixed(3)+')');
+    grd.addColorStop(0.45,'rgba(120,235,150,'+(al*0.45).toFixed(3)+')');
+    grd.addColorStop(1,'rgba(120,235,150,0)');
+    ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(a.x,a.y,r,0,7); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawPrecip(snow){
+  const n=snow?70:100, t=performance.now()/1000;
+  ctx.save();
+  for(let i=0;i<n;i++){
+    const x=(i*97.13)%W, sp=snow?42:280, y=((t*sp + i*53.7)%(H+20))-10;
+    if(snow){ ctx.fillStyle='rgba(255,255,255,0.85)'; ctx.beginPath(); ctx.arc(x+Math.sin(t+i)*7,y,1.6,0,7); ctx.fill(); }
+    else { ctx.strokeStyle='rgba(180,205,235,0.45)'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-2,y+10); ctx.stroke(); }
+  }
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
+function wrap(t,maxw){ const words=t.split(' '),lines=[];let cur='';
+  for(const w of words){ const test=cur?cur+' '+w:w; if(ctx.measureText(test).width>maxw&&cur){lines.push(cur);cur=w;}else cur=test;} if(cur)lines.push(cur); return lines; }
+
+/* ---------- UI panels ---------- */
+const HKEYS=[['cortisol','Cortisol (stress)','var(--cortisol)'],['adrenaline','Adrenaline','var(--adrenaline)'],
+  ['dopamine','Dopamine','var(--dopamine)'],['serotonin','Serotonin','var(--serotonin)'],
+  ['oxytocin','Oxytocin (bonding)','var(--oxytocin)'],['libido','Libido','var(--libido)']];
+function hormHTML(H){ return HKEYS.map(([k,lab,c])=>`<div class="horm"><div class="lab"><span>${lab}</span><span>${Math.round(H[k])}</span></div><div class="bar"><i style="width:${clamp(H[k])}%;background:${c}"></i></div></div>`).join(''); }
+
+let uiT=0;
+function updateUI(dt){
+  uiT-=dt; document.getElementById('day').textContent=Math.min(365,Math.floor(simDay)+1);
+  document.getElementById('yr').textContent=Math.floor(simDay/365)+1;
+  const frac=simDay-Math.floor(simDay); let tm=Math.round(frac*1440); if(tm>=1440)tm=1439;
+  const hh=Math.floor(tm/60), mm=tm%60;
+  document.getElementById('tod').textContent=String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');
+  document.getElementById('season').textContent=seasonOf(simDay);
+  document.getElementById('yearfill').style.width=Math.min(100,(simDay%365)/365*100)+'%';
+  if(uiT>0)return; uiT=0.25;
+  const adults=ants.filter(a=>stage(a)==='adult');
+  document.getElementById('pop').textContent=ants.length;
+  document.getElementById('couples').textContent=Math.floor(adults.filter(a=>a.partnerId).length/2);
+  document.getElementById('bd').textContent=born+' / '+died;
+  document.getElementById('foodc').textContent=food.length;
+  // colony averages
+  const avg={}; HKEYS.forEach(([k])=>avg[k]=0);
+  adults.forEach(a=>HKEYS.forEach(([k])=>avg[k]+=a.H[k]));
+  HKEYS.forEach(([k])=>avg[k]= adults.length?avg[k]/adults.length:0);
+  document.getElementById('colonyHorm').innerHTML='<div style="font-size:11px;color:var(--muted);margin-bottom:5px">Average across '+adults.length+' adults</div>'+hormHTML(avg);
+  // inspector
+  const a=selId?antById(selId):null; const box=document.getElementById('inspect');
+  if(!a){ box.innerHTML='<h2>Ant Inspector</h2><div class="empty">Click any ant in the farm to read its mind and monitor its hormones.</div>'; return; }
+  const st=stage(a), partner=a.partnerId?antById(a.partnerId):null;
+  const mood = a.H.cortisol>72?'Stressed': a.H.adrenaline>50?'Alarmed': a.H.oxytocin>58?'In love':
+    a.hunger>62?'Hungry': a.H.dopamine>58?'Elated': a.H.serotonin>58?'Content': (!a.partnerId?'Lonely':'Calm');
+  const parents=a.parents.map(p=>{const x=antById(p);return x?x.name:'?';}).filter(Boolean);
+  box.innerHTML='<h2>Ant Inspector</h2>'+
+    '<div class="who">'+a.name+' '+a.surname+' <span class="sex" style="color:'+(a.sex==='M'?'#7fb8ff':'#ff9bd0')+'">'+(a.sex==='M'?'♂':'♀')+'</span></div>'+
+    '<div style="margin:4px 0 8px"><span class="badge">'+st+'</span><span class="badge">'+Math.floor(ageDays(a))+'d old</span><span class="badge">mood: '+mood+'</span>'+(a.pregnant?'<span class="badge" style="color:#ff9bd0;border-color:#ff6fae">expecting</span>':'')+'</div>'+
+    '<div class="stat"><span>Partner</span><span>'+(partner?partner.name:'—')+'</span></div>'+
+    '<div class="stat"><span>Parents</span><span>'+(parents.length?parents.join(' & '):'founder')+'</span></div>'+
+    '<div class="stat"><span>Hunger</span><span>'+Math.round(a.hunger)+'%</span></div>'+
+    '<div class="stat"><span>Energy</span><span>'+Math.round(a.energy)+'%</span></div>'+
+    '<div style="margin-top:8px">'+hormHTML(a.H)+'</div>'+
+    '<div class="thought">“'+(a.thought||'…')+'”</div>';
+}
+
+/* ---------- interaction ---------- */
+cv.addEventListener('click',e=>{
+  const r=cv.getBoundingClientRect(); const mx=e.clientX-r.left, my=e.clientY-r.top;
+  let best=null,bd=22; for(const a of ants){ const d=Math.hypot(a.x-mx,a.y-my); if(d<bd){bd=d;best=a;} }
+  selId=best?best.id:null; updateUI(1);
+});
+document.getElementById('play').addEventListener('click',e=>{ paused=!paused; e.target.textContent=paused?'▶ Play':'⏸ Pause'; e.target.classList.toggle('on',!paused); });
+
+/* ---------- persistence: localStorage cache + Supabase cloud sync ---------- */
+const SAVE_KEY='formica_colony_v1';
+const SUPA_URL="https://wtgsxzznpxexlpzsgiml.supabase.co";
+const SUPA_KEY="sb_publishable_8g7vEi7ndEyrFHT2fooZ2A_0vX8cAoB";
+const COLONY_ID="main";
+const SUPA_H={apikey:SUPA_KEY, Authorization:"Bearer "+SUPA_KEY, "Content-Type":"application/json"};
+
+function snapshot(){ return {v:1, lastSimDay:simDay, _id, born, died, usedNames:[...usedNames], ants, food, selId}; }
+function cloudStatus(t){ const el=document.getElementById('cloudLine'); if(el) el.textContent="☁ "+t; }
+function applySave(d){
+  if(!d||!Array.isArray(d.ants)||!d.ants.length) return false;
+  const now=realNow(), delta=now-(typeof d.lastSimDay==='number'?d.lastSimDay:now);
+  ants=d.ants; food=Array.isArray(d.food)?d.food:[]; born=d.born||0; died=d.died||0;
+  usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); selId=d.selId||null;
+  simDay=now;
+  for(const a of ants){                    // shift birthdays so nothing ages while the colony was idle
+    a.born=(a.born||0)+delta;
+    a.x=clamp(a.x,W*0.04,W*0.96); a.y=clamp(a.y,SKY()+22,H-22);
+    if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10};
+  }
+  nursery={x:W*0.5,y:H*0.62};
+  return true;
+}
+function saveLocal(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot())); }catch(e){} }
+function loadLocal(){ try{ const raw=localStorage.getItem(SAVE_KEY); return raw?applySave(JSON.parse(raw)):false; }catch(e){ return false; } }
+async function cloudSave(){
+  try{
+    const r=await fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",
+      headers:{...SUPA_H, Prefer:"resolution=merge-duplicates,return=minimal"},
+      body:JSON.stringify([{id:COLONY_ID, data:snapshot(), updated_at:new Date().toISOString()}])});
+    cloudStatus(r.ok ? ("Synced · "+new Date().toLocaleTimeString()) : ("Sync error "+r.status));
+  }catch(e){ cloudStatus("Offline — saved on this device"); }
+}
+async function cloudLoad(){
+  try{
+    const r=await fetch(SUPA_URL+"/rest/v1/colony_saves?id=eq."+COLONY_ID+"&select=data",{headers:SUPA_H});
+    if(!r.ok) return null; const rows=await r.json(); return rows&&rows[0]?rows[0].data:null;
+  }catch(e){ return null; }
+}
+function saveState(){ saveLocal(); cloudSave(); }
+function freshColony(){
+  ants=[]; food=[]; born=0; died=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null;
+  simDay=realNow(); seed();
+}
+
+/* ---------- boot ---------- */
+resize();   // size canvas + build sand now that all helpers exist
+if(!loadLocal()) freshColony();             // instant display from local cache (or fresh)
+(async function reconcileCloud(){           // then let Supabase (source of truth) take over
+  cloudStatus("connecting…");
+  const cloud=await cloudLoad();
+  if(cloud && applySave(cloud)){
+    log("☁ Colony synced from Supabase — "+ants.length+" ant"+(ants.length>1?"s":"")+", shared across your devices.");
+    cloudStatus("Synced (cloud)");
+  } else {
+    cloudStatus("New cloud colony");
+  }
+  saveState();                              // ensure the cloud row exists / is current
+})();
+setInterval(saveState, 5000);
+window.addEventListener('beforeunload', ()=>{ saveLocal();
+  try{ fetch(SUPA_URL+"/rest/v1/colony_saves",{method:"POST",keepalive:true,
+    headers:{...SUPA_H,Prefer:"resolution=merge-duplicates,return=minimal"},
+    body:JSON.stringify([{id:COLONY_ID,data:snapshot(),updated_at:new Date().toISOString()}])}); }catch(e){}
+});
+if(document.addEventListener) document.addEventListener('visibilitychange',()=>{ if(document.hidden) saveState(); });
+document.getElementById('reset').addEventListener('click',()=>{
+  if(typeof confirm==='function' && !confirm('Start a brand-new colony? This permanently erases the current one (local + cloud).')) return;
+  try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
+  freshColony(); saveState();
+});
+let last=performance.now(), yearDone=false;
+function loop(now){
+  let dtReal=(now-last)/1000; last=now; if(dtReal>0.1)dtReal=0.1;
+  if(!paused && !yearDone){
+    moveDt=dtReal;                       // visible motion runs in real time
+    const dtDays=dtReal*1000/DAY_MS*speed;
+    simDay+=dtDays; step(dtDays);
+    if(simDay>=365){ yearDone=true; finishYear(); }
+  }
+  updateUI(dtReal*speed);
+  draw();
+  requestAnimationFrame(loop);
+}
+function finishYear(){
+  paused=true; document.getElementById('play').textContent='▶ Play';
+  const adults=ants.filter(a=>stage(a)==='adult').length;
+  log("🎉 <b>ONE YEAR COMPLETE.</b> Population <b>"+ants.length+"</b> ("+adults+" adults). Lifetime births "+born+", deaths "+died+". Press Play to keep watching year 2.");
+  // allow continuing into year 2
+  const p=document.getElementById('play'); p.addEventListener('click',()=>{yearDone=false;},{once:true});
+}
+requestAnimationFrame(loop);
+fetchWeather(); setInterval(fetchWeather, 15*60*1000);   // live New Richmond weather, refreshed every 15 min
+</script>
+</body>
+</html>
