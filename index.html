@@ -719,7 +719,7 @@ const SUPA_KEY="sb_publishable_8g7vEi7ndEyrFHT2fooZ2A_0vX8cAoB";
 const COLONY_ID="main", LEASE_ID="broadcaster";
 const SUPA_H={apikey:SUPA_KEY, Authorization:"Bearer "+SUPA_KEY, "Content-Type":"application/json"};
 const CLIENT_ID=Math.random().toString(36).slice(2)+Date.now().toString(36);
-const BROADCAST_MS=1200, POLL_MS=1200, LEASE_TTL=6000, LEASE_EVERY=2500;
+const BROADCAST_MS=1200, POLL_MS=1200, LEASE_TTL=6000, LEASE_EVERY=2500, APP_VER=4;
 let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0, lastTun=0;
 let interpA=null, interpB=null, interpStart=0;
 
@@ -753,9 +753,10 @@ async function writeRow(id,data){ try{ const r=await fetch(SUPA_URL+"/rest/v1/co
 async function tickLease(){
   const lease=await readRow(LEASE_ID), now=Date.now();
   const mine = lease && lease.owner===CLIENT_ID;
-  const stale = !lease || !lease.ts || (now-lease.ts)>LEASE_TTL;
+  // claimable if expired, unclaimed, OR currently held by an older app version (so deploys take over cleanly)
+  const stale = !lease || !lease.ts || (now-lease.ts)>LEASE_TTL || ((lease.ver||0) < APP_VER);
   if(mine || stale){
-    if(await writeRow(LEASE_ID,{owner:CLIENT_ID, ts:now}) && role!=="broadcaster"){
+    if(await writeRow(LEASE_ID,{owner:CLIENT_ID, ts:now, ver:APP_VER}) && role!=="broadcaster"){
       role="broadcaster";
       const d=await readRow(COLONY_ID);
       if(!applyState(d,true)) freshColony();
