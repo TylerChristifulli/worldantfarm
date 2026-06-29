@@ -123,18 +123,51 @@ const stageEl = document.getElementById('stage');
 let W=0,H=0,DPR=Math.min(2,window.devicePixelRatio||1);
 const tunnel = document.createElement('canvas'); const tctx = tunnel.getContext('2d');
 const sand = document.createElement('canvas'); const sctx = sand.getContext('2d');
-const tmini = document.createElement('canvas');  // aspect-correct, higher-res tunnel snapshot for sharing
-// share the dug tunnel network so it persists across refreshes and looks the same for everyone
-function exportTunnel(){ try{
-    const MAXD=900, sc=Math.min(1, MAXD/Math.max(W,H));
-    const tw=Math.max(2,Math.round(W*sc)), th=Math.max(2,Math.round(H*sc));
-    if(tmini.width!==tw) tmini.width=tw; if(tmini.height!==th) tmini.height=th;
-    const m=tmini.getContext('2d'); m.clearRect(0,0,tw,th);
-    m.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,tw,th);
-    return tmini.toDataURL('image/webp',0.72);
-  }catch(e){ return null; } }
-function importTunnel(url){ if(!url) return; const img=new Image();
-  img.onload=()=>{ if(!W||!H) return; tctx.clearRect(0,0,W,H); tctx.imageSmoothingQuality='high'; tctx.drawImage(img,0,0,img.width,img.height,0,0,W,H); }; img.src=url; }
+/* ---------- the nest: a branching tunnel graph that descends from a surface entrance ---------- */
+// nodes/edges live in normalized 0..1 coords so the nest looks identical at any window size and is tiny to share
+let nest={nodes:[],edges:[]}, growBudget=0;
+const MAXNODES=300;
+function seedNest(){ nest={nodes:[{x:0.5, y:(SKY()+8)/H, ch:false}], edges:[]}; growBudget=0; }
+function neighbors(i){ const o=[]; for(const e of nest.edges){ if(e[0]===i)o.push(e[1]); else if(e[1]===i)o.push(e[0]); } return o; }
+function degree(i){ let d=0; for(const e of nest.edges) if(e[0]===i||e[1]===i)d++; return d; }
+function pickNeighbor(i,prev){ let nb=neighbors(i); if(nb.length>1&&prev>=0) nb=nb.filter(n=>n!==prev); if(!nb.length) nb=neighbors(i); return nb.length?pick(nb):i; }
+function nurseryNodeIdx(){ for(let i=nest.nodes.length-1;i>=0;i--) if(nest.nodes[i].ch) return i; return 0; }
+function growStep(){
+  const N=nest.nodes; if(!N.length) return;
+  const leaves=[]; for(let i=0;i<N.length;i++) if(degree(i)<=1) leaves.push(i);
+  const src=(Math.random()<0.72 && leaves.length)? pick(leaves) : ri(0,N.length-1);
+  const p=N[src], ppx=p.x*W, ppy=p.y*H;
+  let ang=Math.PI/2 + rnd(-1.0,1.0);                       // mostly downward, some lateral galleries
+  if(p.y < (SKY()/H)+0.05) ang=Math.PI/2 + rnd(-0.35,0.35); // near the surface, go more straight down
+  const dist=rnd(44,72);
+  let nx=clamp(ppx+Math.cos(ang)*dist,18,W-18), ny=clamp(ppy+Math.sin(ang)*dist,SKY()+14,H-16);
+  for(const n of N){ if(Math.hypot(n.x*W-nx,n.y*H-ny)<24) return; }  // keep tunnels from merging into a blob
+  const ni=N.length; N.push({x:nx/W, y:ny/H, ch:Math.random()<0.09}); nest.edges.push([src,ni]);
+}
+function growNest(workers){
+  if(nest.nodes.length>=MAXNODES) return;
+  growBudget += moveDt*Math.max(1,workers)*0.6;     // real-time digging, proportional to worker count
+  let guard=0; while(growBudget>=1 && nest.nodes.length<MAXNODES && guard++<4){ growBudget-=1; growStep(); }
+}
+function antWalk(a){
+  if(!nest.nodes.length) return;
+  if(a.node==null||a.node>=nest.nodes.length){ a.node=0; a.prev=-1; const n=nest.nodes[0]; a.x=n.x*W; a.y=n.y*H; }
+  if(a.tnode==null||a.tnode>=nest.nodes.length) a.tnode=pickNeighbor(a.node,a.prev);
+  const tn=nest.nodes[a.tnode]; if(!tn){ a.tnode=null; return; }
+  const tx=tn.x*W, ty=tn.y*H, dx=tx-a.x, dy=ty-a.y, d=Math.hypot(dx,dy)||1;
+  const v=46*moveDt*wxActivity;
+  if(d<=v+0.5){ a.x=tx; a.y=ty; a.prev=a.node; a.node=a.tnode; a.tnode=pickNeighbor(a.node,a.prev); }
+  else { a.x+=dx/d*v; a.y+=dy/d*v; a.dir=Math.atan2(dy,dx); }
+}
+function drawNest(){
+  if(!nest.nodes.length) return;
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  for(const n of nest.nodes){ if(n.ch){ ctx.fillStyle='#34230f'; ctx.beginPath(); ctx.ellipse(n.x*W,n.y*H,17,12,0,0,7); ctx.fill(); } }
+  ctx.strokeStyle='#34230f'; ctx.lineWidth=8; ctx.beginPath();
+  for(const e of nest.edges){ const a=nest.nodes[e[0]],b=nest.nodes[e[1]]; if(a&&b){ctx.moveTo(a.x*W,a.y*H);ctx.lineTo(b.x*W,b.y*H);} } ctx.stroke();
+  ctx.strokeStyle='rgba(16,10,3,0.55)'; ctx.lineWidth=3.5; ctx.beginPath();
+  for(const e of nest.edges){ const a=nest.nodes[e[0]],b=nest.nodes[e[1]]; if(a&&b){ctx.moveTo(a.x*W,a.y*H);ctx.lineTo(b.x*W,b.y*H);} } ctx.stroke();
+}
 function resize(){
   W=stageEl.clientWidth; H=stageEl.clientHeight;
   cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
@@ -325,16 +358,18 @@ function stage(a){ const g=ageDays(a);
 
 /* founders */
 function seed(){
+  seedNest();
   nursery={x:W*0.5,y:H*0.62};
-  ants.push(makeAnt({name:"Adam",sex:'M',born:simDay-30,x:W*0.42,y:H*0.5}));
-  ants.push(makeAnt({name:"Eve", sex:'F',born:simDay-30,x:W*0.58,y:H*0.5}));
+  const e=nest.nodes[0];
+  ants.push(makeAnt({name:"Adam",sex:'M',born:simDay-30,x:e.x*W-10,y:e.y*H}));
+  ants.push(makeAnt({name:"Eve", sex:'F',born:simDay-30,x:e.x*W+10,y:e.y*H}));
   for(let i=0;i<5;i++)spawnFood();
   log("<b>Adam</b> and <b>Eve Formica</b> begin their colony. Two minds, one anthill.");
 }
 
-/* ---------- food ---------- */
+/* ---------- food (delivered to the surface entrance) ---------- */
 function spawnFood(){
-  food.push({x:rnd(W*0.08,W*0.92), y:rnd(SKY()+30,H-30), r:rnd(3,6)});
+  food.push({x:rnd(W*0.12,W*0.88), y:rnd(SKY()+6,SKY()+22), r:rnd(3,6)});
 }
 
 /* ---------- relationships ---------- */
@@ -355,6 +390,8 @@ function step(dt){
   if(food.length<80 && Math.random()<fr*dt*30) spawnFood();
 
   const adults=ants.filter(a=>stage(a)==='adult');
+  growNest(adults.length);                       // workers keep extending the tunnels
+  { const ni=nurseryNodeIdx(); const nn=nest.nodes[ni]; if(nn) nursery={x:nn.x*W,y:nn.y*H}; }
 
   for(const a of ants){
     const st=stage(a);
@@ -362,82 +399,50 @@ function step(dt){
     // ---- aging / death ----
     if(st==='adult'){
       if(ageDays(a)>a.lifespan){ kill(a,"died peacefully of old age"); continue; }
-      if(a.hunger>=100){ a._starve=(a._starve||0)+dt; if(a._starve>7){kill(a,"starved");continue;} }
+      if(a.hunger>=100){ a._starve=(a._starve||0)+dt; if(a._starve>9){kill(a,"starved");continue;} }
       else a._starve=0;
     }
 
     if(st==='egg'||st==='larva'||st==='pupa'){
-      // brood: nestled in nursery, barely move, calm (re-target only occasionally)
-      if(!a._broodT || (a._broodT-=1)<0){ a.tx=nursery.x+rnd(-46,46); a.ty=nursery.y+rnd(-30,30); a._broodT=ri(120,260); }
-      moveTo(a,dt, st==='larva'?14:4);
+      // brood rests in a nursery chamber, barely moving
+      a.x += (nursery.x+rnd(-12,12)-a.x)*Math.min(1,moveDt*2);
+      a.y += (nursery.y+rnd(-9,9)-a.y)*Math.min(1,moveDt*2);
       a.H.cortisol=clamp(a.H.cortisol+(12-a.H.cortisol)*dt*0.5);
       a.H.oxytocin=clamp(a.H.oxytocin+(60-a.H.oxytocin)*dt*0.4);
       continue;
     }
 
-    /* ===== ADULT behaviour & hormones ===== */
+    /* ===== ADULT: crawl the tunnels ===== */
     a.hunger=clamp(a.hunger+rnd(6,10)*dt);
-    a.energy=clamp(a.energy-3*dt + (a.energy<30?0:0));
     a.libidoCD=Math.max(0,a.libidoCD-dt);
+    antWalk(a);                                    // movement is constrained to the dug tunnels
+    if(a.y < SKY()+48) a.hunger=clamp(a.hunger-180*dt);   // feed at the surface entrance
 
-    // crowding
+    // crowding + partner bookkeeping
     let near=0; for(const o of adults){ if(o!==a){ const d=Math.hypot(o.x-a.x,o.y-a.y); if(d<70)near++; } }
     const crowd=Math.max(0,near-3)*7;
-
     const partner=a.partnerId?antById(a.partnerId):null;
     if(a.partnerId && !partner){ a.partnerId=null; a.H.cortisol=clamp(a.H.cortisol+35); a.H.oxytocin=clamp(a.H.oxytocin-30); log("<b>"+a.name+"</b> lost their partner. Grief floods the tunnels."); }
+    let nearPartner=0; if(partner){ nearPartner=Math.hypot(partner.x-a.x,partner.y-a.y)<55?1:0; }
 
-    // --- choose goal --- (paired ants live their own lives; they only seek each other to mate)
-    const f = partner ? (a.sex==='F'?a:partner) : null;
-    const m = partner ? (a.sex==='M'?a:partner) : null;
-    const mateReady = partner && f && m && !f.pregnant && f.libidoCD<=0 && m.libidoCD<=0 &&
-                      f.H.libido>62 && m.H.libido>55 && f.hunger<58 && m.hunger<66 && adults.length<MAXPOP;
-    let goal="wander";
-    if(a.hunger>55) goal="food";
-    else if(!a.partnerId && a.H.cortisol<80) goal="seekMate";
-    else if(mateReady) goal="mate";
-    if(a.pregnant && a.gest<=0) goal="nest";
-
-    // distance to partner (used for bonding hormones)
-    let nearPartner=0;
-    if(partner){ const d=Math.hypot(partner.x-a.x,partner.y-a.y); nearPartner=d<55?1:0; }
-
-    // ---- act on goal ----
-    if(goal==="food"){
-      let best=null,bd=1e9; for(const f2 of food){const d=Math.hypot(f2.x-a.x,f2.y-a.y); if(d<bd){bd=d;best=f2;}}
-      if(best){ a.tx=best.x; a.ty=best.y; if(bd<10){ eat(a,best); } }
-      else { wander(a); }
-      moveTo(a,dt,26);
-    } else if(goal==="seekMate"){
-      let best=null,bd=1e9;
-      for(const o of adults){ if(o!==a && o.sex!==a.sex && !o.partnerId && !related(a,o) && o.H.cortisol<85){
-        const d=Math.hypot(o.x-a.x,o.y-a.y); if(d<bd){bd=d;best=o;} } }
-      if(best){ a.tx=best.x; a.ty=best.y; moveTo(a,dt,24);
-        if(bd<16 && !best.partnerId){ // pair up (a lasting bond — but they still roam independently)
-          a.partnerId=best.id; best.partnerId=a.id;
-          a.H.oxytocin=clamp(a.H.oxytocin+45); best.H.oxytocin=clamp(best.H.oxytocin+45);
-          a.H.dopamine=clamp(a.H.dopamine+25); best.H.dopamine=clamp(best.H.dopamine+25);
-          log("💞 <b>"+a.name+"</b> and <b>"+best.name+"</b> have paired up.");
-        }
-      } else { wander(a); moveTo(a,dt,18); }
-    } else if(goal==="nest"){
-      if(!a._nestT || (a._nestT-=1)<0 || Math.hypot(a.tx-nursery.x,a.ty-nursery.y)>30){
-        a.tx=nursery.x+rnd(-20,20); a.ty=nursery.y+rnd(-15,15); a._nestT=ri(40,90);
+    // pairing: unpaired adults bond when they pass each other in the tunnels
+    if(!a.partnerId && a.H.cortisol<80){
+      for(const o of adults){ if(o!==a && o.sex!==a.sex && !o.partnerId && !related(a,o) && Math.hypot(o.x-a.x,o.y-a.y)<18){
+        a.partnerId=o.id; o.partnerId=a.id;
+        a.H.oxytocin=clamp(a.H.oxytocin+45); o.H.oxytocin=clamp(o.H.oxytocin+45);
+        a.H.dopamine=clamp(a.H.dopamine+25); o.H.dopamine=clamp(o.H.dopamine+25);
+        log("💞 <b>"+a.name+"</b> and <b>"+o.name+"</b> have paired up."); break; } }
+    }
+    // mating: paired, ready, and together
+    if(partner){
+      const f=a.sex==='F'?a:partner, m=a.sex==='M'?a:partner;
+      if(!f.pregnant && f.libidoCD<=0 && m.libidoCD<=0 && f.H.libido>62 && m.H.libido>55 && f.hunger<60 && m.hunger<70 && adults.length<MAXPOP && nearPartner && Math.random()<dt*6){
+        f.pregnant=true; f.gest=rnd(4,6); f.libidoCD=20; m.libidoCD=20; f.H.libido=15; m.H.libido=18;
+        f.H.oxytocin=clamp(f.H.oxytocin+30); m.H.oxytocin=clamp(m.H.oxytocin+30);
+        f.H.dopamine=clamp(f.H.dopamine+34); m.H.dopamine=clamp(m.H.dopamine+34);
       }
-      moveTo(a,dt,18);
-      if(Math.hypot(nursery.x-a.x,nursery.y-a.y)<40){ layEggs(a); }
-    } else if(goal==="mate" && partner){
-      // briefly converge on the partner to mate, then disperse and resume their own routine
-      a.tx=partner.x; a.ty=partner.y; moveTo(a,dt,24);
-      if(Math.hypot(partner.x-a.x,partner.y-a.y)<18 && !f.pregnant && f.libidoCD<=0 && Math.random()<dt*6){
-        f.pregnant=true; f.gest=rnd(4,6);
-        a.libidoCD=20; partner.libidoCD=20; a.H.libido=15; partner.H.libido=18;
-        a.H.oxytocin=clamp(a.H.oxytocin+30); partner.H.oxytocin=clamp(partner.H.oxytocin+30);
-        a.H.dopamine=clamp(a.H.dopamine+34); partner.H.dopamine=clamp(partner.H.dopamine+34);
-      }
-    } else { wander(a); moveTo(a,dt,15); }
-
-    if(a.pregnant){ a.gest-=dt; if(a.gest<=0 && Math.hypot(nursery.x-a.x,nursery.y-a.y)>50){ /*head to nest handled by goal*/ } }
+    }
+    if(a.pregnant){ a.gest-=dt; if(a.gest<=0) layEggs(a); }
 
     /* ---- hormone dynamics (move toward targets) ---- */
     const wellFed=a.hunger<40;
@@ -518,20 +523,7 @@ function kill(a,why){
   log("🪦 <b>"+a.name+" "+a.surname+"</b> "+why+" at "+Math.floor(ageDays(a))+" days.");
 }
 
-/* ---------- tunnels: narrow channels, granular collapse, surface spoil mound ---------- */
-function carve(x,y,r){            // a hole can only be so wide before the sand caves in
-  tctx.globalCompositeOperation='source-over';
-  const rad=r*1.5;
-  const g=tctx.createRadialGradient(x,y,0,x,y,rad);
-  g.addColorStop(0,'rgba(50,35,17,0.5)'); g.addColorStop(0.6,'rgba(50,35,17,0.25)'); g.addColorStop(1,'rgba(50,35,17,0)');
-  tctx.fillStyle=g; tctx.beginPath(); tctx.arc(x,y,rad,0,7); tctx.fill();
-}
-function healTunnels(){           // unused voids are prone to gravity — sand slowly trickles back in
-  tctx.globalCompositeOperation='destination-out';
-  tctx.fillStyle='rgba(0,0,0,0.0011)';
-  tctx.fillRect(0,0,W,H);
-  tctx.globalCompositeOperation='source-over';
-}
+/* ---------- surface spoil mound ---------- */
 function drawMound(){             // the dirt they remove has to go somewhere → it piles up top
   const mH=Math.min(SKY()*0.9, Math.sqrt(Math.max(0,dug))*0.8);
   if(mH<2) return;
@@ -548,24 +540,18 @@ function drawMound(){             // the dirt they remove has to go somewhere �
 
 /* ---------- drawing ---------- */
 function draw(){
-  // only the live broadcaster digs/collapses; the resulting network is shared to all viewers
-  if(role==='broadcaster'){
-    healTunnels();
-    for(const a of ants){ const s=stage(a); if(s!=='egg' && a.y>SKY()+4) carve(a.x,a.y, s==='adult'?3.5:2); }
-  }
-  // sandy earth (pre-rendered) + dug tunnels
+  // sandy earth + the branching tunnel nest (vector — crisp & identical for everyone)
   ctx.drawImage(sand,0,0,sand.width,sand.height,0,0,W,H);
-  ctx.drawImage(tunnel,0,0,tunnel.width,tunnel.height,0,0,W,H);
+  drawNest();
   // surface line + grass
   ctx.strokeStyle='#9c7a44'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,SKY()); ctx.lineTo(W,SKY()); ctx.stroke();
   ctx.fillStyle='#3f6b3a';
   for(let x=0;x<W;x+=11){ const h=6+((x*7)%9); ctx.beginPath(); ctx.moveTo(x,SKY()); ctx.lineTo(x+3,SKY()-h); ctx.lineTo(x+6,SKY()); ctx.fill(); }
   drawMound();   // spoil pile from everything they've excavated
-  // nursery chamber
-  ctx.fillStyle='rgba(231,181,60,0.07)'; ctx.strokeStyle='rgba(231,181,60,0.35)';
-  ctx.beginPath(); ctx.ellipse(nursery.x,nursery.y,58,40,0,0,7); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='rgba(231,181,60,0.6)'; ctx.font='9px sans-serif'; ctx.textAlign='center';
-  ctx.fillText('NURSERY',nursery.x,nursery.y-46);
+  // nursery chamber label
+  if(nest.nodes.length){ const nn=nest.nodes[nurseryNodeIdx()], nx=nn.x*W, ny=nn.y*H;
+    ctx.strokeStyle='rgba(231,181,60,0.45)'; ctx.lineWidth=1; ctx.beginPath(); ctx.ellipse(nx,ny,21,15,0,0,7); ctx.stroke();
+    ctx.fillStyle='rgba(231,181,60,0.65)'; ctx.font='9px sans-serif'; ctx.textAlign='center'; ctx.fillText('NURSERY',nx,ny-20); }
   // food
   for(const f of food){ ctx.fillStyle='#cde06a'; ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,7); ctx.fill();
     ctx.fillStyle='rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.arc(f.x+1,f.y+1,f.r*0.4,0,7); ctx.fill(); }
@@ -738,7 +724,7 @@ let role="viewer", lastBroadcast=0, lastPoll=0, lastLease=0, lastTun=0;
 let interpA=null, interpB=null, interpStart=0;
 
 // cw/ch = broadcaster's canvas size, so viewers can map ants/food into their own window (keeps ants on their tunnels)
-function snapshot(includeTun){ const s={v:3, lastSimDay:simDay, cw:W, ch:H, _id, born, died, dug, usedNames:[...usedNames], ants, food}; if(includeTun) s.tunImg=exportTunnel(); return s; }
+function snapshot(heavy){ const s={v:4, lastSimDay:simDay, cw:W, ch:H, _id, born, died, dug, usedNames:[...usedNames], ants, food}; if(heavy) s.nest=nest; return s; }
 function ensureH(a){ if(!a.H) a.H={cortisol:18,adrenaline:5,dopamine:25,serotonin:55,oxytocin:18,libido:10}; }
 function setStatus(){
   const el=document.getElementById('cloudLine'); const b=document.getElementById('livebadge');
@@ -754,7 +740,7 @@ function applyState(d, shiftAges){
   ants=d.ants; food=Array.isArray(d.food)?d.food.map(f=>({x:f.x*sx,y:f.y*sy,r:f.r})):[]; born=d.born||0; died=d.died||0; dug=d.dug||0;
   usedNames=new Set(d.usedNames||["Adam","Eve"]); _id=d._id||(ants.length+1); simDay=now;
   for(const a of ants){ a.born=(a.born||0)+delta; a.x=clamp(a.x*sx,W*0.04,W*0.96); a.y=clamp(a.y*sy,SKY()+22,H-22); ensureH(a); }
-  importTunnel(d.tunImg);   // restore the shared tunnel network so it doesn't start over
+  if(d.nest&&Array.isArray(d.nest.nodes)&&d.nest.nodes.length) nest=d.nest; else if(!nest.nodes.length) seedNest();
   nursery={x:W*0.5,y:H*0.62}; return true;
 }
 function freshColony(){ ants=[]; food=[]; born=0; died=0; dug=0; usedNames=new Set(["Adam","Eve"]); _id=1; selId=null; simDay=realNow(); if(tctx&&W)tctx.clearRect(0,0,W,H); seed(); }
@@ -783,7 +769,7 @@ async function pollState(){
   const d=await readRow(COLONY_ID);
   if(d && Array.isArray(d.ants)){
     born=d.born||0; died=d.died||0; dug=d.dug||0;
-    importTunnel(d.tunImg);   // viewers render the same shared tunnel network
+    if(d.nest&&Array.isArray(d.nest.nodes)) nest=d.nest;   // viewers render the same shared nest
     const sx=W/(d.cw||W), sy=H/(d.ch||H);   // map broadcaster coords into this window so ants sit on their tunnels
     for(const a of d.ants){ a.x*=sx; a.y*=sy; ensureH(a); }
     food=Array.isArray(d.food)?d.food.map(f=>({x:f.x*sx,y:f.y*sy,r:f.r})):[];
